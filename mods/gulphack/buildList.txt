@@ -1,0 +1,3 @@
+american_emu, header, header_start, 0x4c, src/gulphack.c, gulphack.bin
+american_ps1, header, header_start, 0x4c, src/gulphack.c, gulphack.bin
+american_ps2, header, header_start, 0x48, src/gulphack.c, gulphack.bin
