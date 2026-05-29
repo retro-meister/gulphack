@@ -1,0 +1,52 @@
+{
+    "compiler": {
+        "function_sections": 1,
+        "reorder_functions": 1,
+        "optimization": 4,
+        "debug": 0,
+        "psyq": 0,
+        "8mb": 0,
+        "mininoob": 0
+    },
+    "versions": [
+        {
+            "american_emu": {
+                "name": "spyro2.bin",
+                "symbols": [
+                    "funcs-u.txt",
+                    "data-u.txt",
+                    "funcs-u-rs2.txt",
+                    "data-u-rs2.txt",
+                    "ps1.txt"
+                ],
+                "build_id": 94424
+            }
+        },
+        {
+            "american_ps1": {
+                "name": "spyro2.bin",
+                "symbols": [
+                    "funcs-u.txt",
+                    "data-u.txt",
+                    "funcs-u-rs2.txt",
+                    "data-u-rs2.txt",
+                    "ps1.txt"
+                ],
+                "build_id": 94425
+            }
+        },
+        {
+            "american_ps2": {
+                "name": "spyro2.bin",
+                "symbols": [
+                    "funcs-u.txt",
+                    "data-u.txt",
+                    "funcs-u-rs2.txt",
+                    "data-u-rs2.txt",
+                    "ps2.txt"
+                ],
+                "build_id": 94426
+            }
+        }
+    ]
+}
