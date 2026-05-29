@@ -1,1 +1,17 @@
+.vscode
 build/
+debug/
+*.log
+offset.txt
+overlay.ld
+Makefile
+backup/
+output/
+*.o
+*.dep
+.DS_Store
+.vagrant
+spyro2.bin
+spyro2.cue
+psyq-4_7-converted
+__pycache__
