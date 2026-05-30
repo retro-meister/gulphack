@@ -36,8 +36,8 @@ static const GulpConfig gulpConfigDefault = {
 };
 
 static const GulpConfig gulpConfigCustom = {
-    .egg_hatch_timer_min            = 120,
-    .egg_hatch_timer_max            = 150,
+    .egg_hatch_timer_min            = 0x78,
+    .egg_hatch_timer_max            = 170,
     .vulture_drop_delay_min         = 0x50,
     .vulture_drop_delay_max         = 0x50,
     .vulture_approach_timer_initial = 0x03e8,
@@ -84,9 +84,9 @@ static const GulpDropScript s_script[GULP_SCRIPT_LEN] = {
     {  8, ROCKET },
     { 24, ROCKET },
 
-    { 22, BOMB },
-    {  16, BARREL   },
-    {  7, BARREL },
+    {  3, BARREL   },
+    { 11, ROCKET },
+    {  23, BARREL },
 
     { 25, ROCKET   },
     {  3, BARREL },
