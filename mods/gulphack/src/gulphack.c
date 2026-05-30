@@ -37,9 +37,9 @@ static const GulpConfig gulpConfigDefault = {
 
 static const GulpConfig gulpConfigCustom = {
     .egg_hatch_timer_min            = 120,
-    .egg_hatch_timer_max            = 170,
-    .vulture_drop_delay_min         = 80,
-    .vulture_drop_delay_max         = 130,
+    .egg_hatch_timer_max            = 150,
+    .vulture_drop_delay_min         = 0x50,
+    .vulture_drop_delay_max         = 0x50,
     .vulture_approach_timer_initial = 0x03e8,
     .vulture_drop_angle_threshold   = 0x20,
     .vulture_drop_distance_threshold = 0x708,
@@ -78,19 +78,19 @@ static const int s_weapon_roll[3] = {
 };
 
 static const GulpDropScript s_script[GULP_SCRIPT_LEN] = {
-    {  5, BARREL },
-    { 7, BARREL   },
+    {  4, BARREL },
+    { 6, BARREL   },
     
-    {  1, ROCKET },
-    { 13, ROCKET },
+    {  8, ROCKET },
+    { 24, ROCKET },
 
-    {  20, ROCKET   },
-    { 15, BARREL },
-    {  16, BARREL },
+    { 22, BOMB },
+    {  16, BARREL   },
+    {  7, BARREL },
 
-    { 25, BOMB   },
-    {  11, ROCKET },
-    {  10, BARREL },
+    { 25, ROCKET   },
+    {  3, BARREL },
+    {  2, BARREL },
 };
 
 // -----------------------------------------------------------------------
@@ -109,7 +109,7 @@ static int s_hooks_installed = 0;
 //           targetIndex causes the loop to pick it on its first probe.
 int gulp_target_hook(int a0, int count) {
     if (GULP_drop_counter < GULP_SCRIPT_LEN) {
-        return s_script[GULP_drop_counter].targetIndex - 1;
+        return s_script[GULP_drop_counter].targetIndex;
     }
     return RandomRangeInclusive(a0, count);
 }
