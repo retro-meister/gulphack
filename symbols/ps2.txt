@@ -4,3 +4,4 @@ GAME_RenderGame        = 0x800156fc;
 GAME_gameState         = 0x800681c8;
 GAME_level_id          = 0x80066f90;
 RandomRangeInclusive   = 0x8003891c;
+GULP_drop_counter      = 0x80120c94;

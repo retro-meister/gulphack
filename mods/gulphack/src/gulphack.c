@@ -1,9 +1,10 @@
 #include <stdint.h>
 
-extern void    GAME_RenderGame(void);
-extern int     RandomRangeInclusive(int min, int max);
-extern int     GAME_gameState;
-extern uint8_t GAME_level_id;
+extern void              GAME_RenderGame(void);
+extern int               RandomRangeInclusive(int min, int max);
+extern int               GAME_gameState;
+extern uint8_t           GAME_level_id;
+extern volatile uint32_t GULP_drop_counter;
 
 #define GULP_FIGHT_LEVEL_ID 0x2e
 
@@ -35,10 +36,10 @@ static const GulpConfig gulpConfigDefault = {
 };
 
 static const GulpConfig gulpConfigCustom = {
-    .egg_hatch_timer_min            = 0x78,
-    .egg_hatch_timer_max            = 0x78,
-    .vulture_drop_delay_min         = 0x0,
-    .vulture_drop_delay_max         = 0x0,
+    .egg_hatch_timer_min            = 120,
+    .egg_hatch_timer_max            = 170,
+    .vulture_drop_delay_min         = 80,
+    .vulture_drop_delay_max         = 130,
     .vulture_approach_timer_initial = 0x03e8,
     .vulture_drop_angle_threshold   = 0x20,
     .vulture_drop_distance_threshold = 0x708,
@@ -66,34 +67,37 @@ typedef struct {
     GulpWeapon weapon;
 } GulpDropScript;
 
-// Weapon encoding: the existing random branch uses s7 value ranges
-//   s7 < 0x29          => barrel (0x196)
-//   0x29 <= s7 < 0x51  => bomb   (0x197)
-//   s7 >= 0x51         => rocket (0x198)
-static const int s_weapon_roll[3] = { 0x00, 0x29, 0x51 };
+// probeIdx from this hook selects egg contents:
+//   probeIdx <= 40           => bomb
+//   40 < probeIdx < 81       => barrel
+//   probeIdx >= 81           => rocket
+static const int s_weapon_roll[3] = {
+    [BARREL] = 41,
+    [BOMB]   = 0,
+    [ROCKET] = 81,
+};
 
 static const GulpDropScript s_script[GULP_SCRIPT_LEN] = {
     {  5, BARREL },
     { 7, BARREL   },
     
-    {  11, ROCKET },
-    { 23, ROCKET },
+    {  1, ROCKET },
+    { 13, ROCKET },
 
-    {  20, BARREL   },
+    {  20, ROCKET   },
     { 15, BARREL },
-    {  16, ROCKET },
+    {  16, BARREL },
 
-    { 25, ROCKET   },
+    { 25, BOMB   },
     {  11, ROCKET },
-    {  10, ROCKET },
+    {  10, BARREL },
 };
 
 // -----------------------------------------------------------------------
 // State
 // -----------------------------------------------------------------------
 
-static int      s_hooks_installed = 0;
-static uint32_t s_drop_idx        = 0;
+static int s_hooks_installed = 0;
 
 // -----------------------------------------------------------------------
 // Hook functions (called in place of RandomRangeInclusive in the overlay)
@@ -104,21 +108,20 @@ static uint32_t s_drop_idx        = 0;
 //           linear-probe target selection loop. Returning the desired
 //           targetIndex causes the loop to pick it on its first probe.
 int gulp_target_hook(int a0, int count) {
-    if (s_drop_idx < GULP_SCRIPT_LEN) {
-        return s_script[s_drop_idx].targetIndex - 1;
+    if (GULP_drop_counter < GULP_SCRIPT_LEN) {
+        return s_script[GULP_drop_counter].targetIndex - 1;
     }
     return RandomRangeInclusive(a0, count);
 }
 
 // Replaces: jal RandomRangeInclusive at 0x80077838
 // Context:  a0=0, a1=0x64; return value (s7) drives the barrel/bomb/rocket
-//           branch. We also advance s_drop_idx here — this fires when an egg
-//           actually spawns, which is the definitive "one drop happened" event.
+//           branch. GULP_drop_counter is incremented by the game at 0x80077a38
+//           after this returns, and its reset at 0x8007729c is NOP'd out so it
+//           counts monotonically across all cycles.
 int gulp_weapon_hook(int a0, int a1) {
-    if (s_drop_idx < GULP_SCRIPT_LEN) {
-        int roll = s_weapon_roll[s_script[s_drop_idx].weapon];
-        s_drop_idx++;
-        return roll;
+    if (GULP_drop_counter < GULP_SCRIPT_LEN) {
+        return s_weapon_roll[s_script[GULP_drop_counter].weapon];
     }
     return RandomRangeInclusive(a0, a1);
 }
@@ -158,10 +161,10 @@ static void gulp_apply_config_patches(const GulpConfig *cfg) {
 
 static void gulp_install_hooks(void) {
     gulp_apply_config_patches(s_config);
+    patch_u32((uint32_t *)0x8007729c, 0x00000000); // NOP the drop counter reset
     patch_jal((uint32_t *)0x80077490, (uint32_t)gulp_target_hook);
     patch_jal((uint32_t *)0x80077838, (uint32_t)gulp_weapon_hook);
     s_hooks_installed = 1;
-    s_drop_idx        = 0;
 }
 
 // -----------------------------------------------------------------------
