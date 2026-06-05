@@ -90,7 +90,7 @@ static const GulpDropScript drop_script[GULP_SCRIPT_LEN] = {
 
 static int hooks_installed = 0;
 
-int gulp_random_drop_target_hook(int min, int max) {
+int gulp_random_drop_location_hook(int min, int max) {
     if (GULP_drop_counter < GULP_SCRIPT_LEN) {
         return drop_script[GULP_drop_counter].targetIndex;
     }
@@ -136,7 +136,7 @@ static void gulp_apply_config_patches(const GulpConfig *cfg) {
 static void gulp_install_hooks(void) {
     gulp_apply_config_patches(config);
     patch_u32((uint32_t *)0x8007729c, 0x00000000); // NOP the drop counter reset
-    patch_jal((uint32_t *)0x80077490, (uint32_t)gulp_random_drop_target_hook);
+    patch_jal((uint32_t *)0x80077490, (uint32_t)gulp_random_drop_location_hook);
     patch_jal((uint32_t *)0x80077838, (uint32_t)gulp_random_weapon_hook);
     hooks_installed = 1;
 }
