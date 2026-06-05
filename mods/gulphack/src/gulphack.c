@@ -74,16 +74,16 @@ static const int s_weapon_roll[3] = {
 // Hardcode a pre-scripted Gulp fight
 static const GulpDropScript s_script[GULP_SCRIPT_LEN] = {
     {  4, BARREL },
-    { 6, BARREL   },
+    {  6, BARREL },
     
     {  8, ROCKET },
     { 24, ROCKET },
 
-    {  3, BARREL   },
+    {  3, BARREL },
     { 11, ROCKET },
-    {  23, BARREL },
+    { 23, BARREL },
 
-    { 25, ROCKET   },
+    { 25, ROCKET },
     {  3, BARREL },
     {  2, BARREL },
 };
