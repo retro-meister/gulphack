@@ -47,7 +47,7 @@ static const GulpConfig gulpConfigCustom = {
     .random_bomb_upper_exclusive    = 41,
 };
 
-static const GulpConfig *s_config = &gulpConfigCustom;
+static const GulpConfig *config = &gulpConfigCustom;
 
 #define GULP_SCRIPT_LEN 10
 
@@ -65,14 +65,14 @@ typedef struct {
 //   rand <= 40           => bomb
 //   40 < rand < 81       => barrel
 //   rand >= 81           => rocket
-static const int s_weapon_roll[3] = {
+static const int weapon_roll[3] = {
     [BARREL] = 41,
     [BOMB]   = 0,
     [ROCKET] = 81,
 };
 
 // Hardcode a pre-scripted Gulp fight
-static const GulpDropScript s_script[GULP_SCRIPT_LEN] = {
+static const GulpDropScript drop_script[GULP_SCRIPT_LEN] = {
     {  4, BARREL },
     {  6, BARREL },
     
@@ -88,18 +88,18 @@ static const GulpDropScript s_script[GULP_SCRIPT_LEN] = {
     {  2, BARREL },
 };
 
-static int s_hooks_installed = 0;
+static int hooks_installed = 0;
 
 int gulp_random_drop_target_hook(int min, int max) {
     if (GULP_drop_counter < GULP_SCRIPT_LEN) {
-        return s_script[GULP_drop_counter].targetIndex;
+        return drop_script[GULP_drop_counter].targetIndex;
     }
     return RandomRangeInclusive(min, max);
 }
 
 int gulp_random_weapon_hook(int min, int max) {
     if (GULP_drop_counter < GULP_SCRIPT_LEN) {
-        return s_weapon_roll[s_script[GULP_drop_counter].weapon];
+        return weapon_roll[drop_script[GULP_drop_counter].weapon];
     }
     return RandomRangeInclusive(min, max);
 }
@@ -134,11 +134,11 @@ static void gulp_apply_config_patches(const GulpConfig *cfg) {
 }
 
 static void gulp_install_hooks(void) {
-    gulp_apply_config_patches(s_config);
+    gulp_apply_config_patches(config);
     patch_u32((uint32_t *)0x8007729c, 0x00000000); // NOP the drop counter reset
     patch_jal((uint32_t *)0x80077490, (uint32_t)gulp_random_drop_target_hook);
     patch_jal((uint32_t *)0x80077838, (uint32_t)gulp_random_weapon_hook);
-    s_hooks_installed = 1;
+    hooks_installed = 1;
 }
 
 void main_hook(void) {
@@ -148,12 +148,12 @@ void main_hook(void) {
                         (GAME_level_id == GULP_FIGHT_LEVEL_ID);
 
     if (in_gulp_fight) {
-        if (!s_hooks_installed) {
+        if (!hooks_installed) {
             gulp_install_hooks();
         }
     } else {
-        if (s_hooks_installed) {
-            s_hooks_installed = 0;
+        if (hooks_installed) {
+            hooks_installed = 0;
         }
     }
 }
