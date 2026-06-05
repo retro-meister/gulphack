@@ -89,18 +89,18 @@ static const GulpDropScript s_script[GULP_SCRIPT_LEN] = {
 
 static int s_hooks_installed = 0;
 
-int gulp_target_hook(int a0, int count) {
+int gulp_random_drop_target_hook(int min, int max) {
     if (GULP_drop_counter < GULP_SCRIPT_LEN) {
         return s_script[GULP_drop_counter].targetIndex;
     }
-    return RandomRangeInclusive(a0, count);
+    return RandomRangeInclusive(min, max);
 }
 
-int gulp_weapon_hook(int a0, int a1) {
+int gulp_random_weapon_hook(int min, int max) {
     if (GULP_drop_counter < GULP_SCRIPT_LEN) {
         return s_weapon_roll[s_script[GULP_drop_counter].weapon];
     }
-    return RandomRangeInclusive(a0, a1);
+    return RandomRangeInclusive(min, max);
 }
 
 static void patch_u32(uint32_t *loc, uint32_t value) {
@@ -135,8 +135,8 @@ static void gulp_apply_config_patches(const GulpConfig *cfg) {
 static void gulp_install_hooks(void) {
     gulp_apply_config_patches(s_config);
     patch_u32((uint32_t *)0x8007729c, 0x00000000); // NOP the drop counter reset
-    patch_jal((uint32_t *)0x80077490, (uint32_t)gulp_target_hook);
-    patch_jal((uint32_t *)0x80077838, (uint32_t)gulp_weapon_hook);
+    patch_jal((uint32_t *)0x80077490, (uint32_t)gulp_random_drop_target_hook);
+    patch_jal((uint32_t *)0x80077838, (uint32_t)gulp_random_weapon_hook);
     s_hooks_installed = 1;
 }
 
