@@ -35,12 +35,12 @@ static const GulpConfig gulpConfigDefault = {
 
 static const GulpConfig gulpConfigCustom = {
     .egg_hatch_timer_min            = 0x78,
-    .egg_hatch_timer_max            = 0x78,
-    .vulture_drop_delay_min         = 0x0,
-    .vulture_drop_delay_max         = 0x0,
+    .egg_hatch_timer_max            = 0xdc,
+    .vulture_drop_delay_min         = 0x50,
+    .vulture_drop_delay_max         = 0xb4,
     .vulture_approach_timer_initial = 0x03e8,
     .vulture_drop_angle_threshold   = 0x20,
-    .vulture_drop_distance_threshold = 3600,
+    .vulture_drop_distance_threshold = 0x708,
     .vulture_drop_population_gate   = 6,
     .random_rocket_lower            = 81,
     .random_bomb_upper_exclusive    = 41,
