@@ -112,25 +112,21 @@ static void patch_jal(uint32_t *loc, uint32_t target) {
     *loc = ((target & 0x03ffffff) >> 2) | 0x0c000000;
 }
 
-static uint32_t encode_addiu(unsigned rt, unsigned rs, int imm) {
-    return 0x24000000 | (rs << 21) | (rt << 16) | (imm & 0xffff);
-}
-
-static uint32_t encode_slti(unsigned rt, unsigned rs, int imm) {
-    return 0x28000000 | (rs << 21) | (rt << 16) | (imm & 0xffff);
+static void patch_imm16(uint32_t *loc, int imm) {
+    *loc = (*loc & 0xffff0000) | (imm & 0xffff);
 }
 
 static void gulp_apply_config_patches(const GulpConfig *cfg) {
-    patch_u32((uint32_t *)0x800779c8, encode_addiu(4, 0, cfg->egg_hatch_timer_min));
-    patch_u32((uint32_t *)0x800779d0, encode_addiu(5, 0, cfg->egg_hatch_timer_max));
-    patch_u32((uint32_t *)0x80077a24, encode_addiu(4, 0, cfg->vulture_drop_delay_min));
-    patch_u32((uint32_t *)0x80077a30, encode_addiu(5, 0, cfg->vulture_drop_delay_max));
-    patch_u32((uint32_t *)0x800772a0, encode_addiu(2, 0, cfg->vulture_approach_timer_initial));
-    patch_u32((uint32_t *)0x80077804, encode_slti(2, 2, cfg->vulture_drop_angle_threshold));
-    patch_u32((uint32_t *)0x800777c0, encode_slti(2, 2, cfg->vulture_drop_distance_threshold));
-    patch_u32((uint32_t *)0x80077618, encode_slti(2, 16, cfg->vulture_drop_population_gate));
-    patch_u32((uint32_t *)0x8007799c, encode_slti(2, 23, cfg->random_rocket_lower));
-    patch_u32((uint32_t *)0x800779a4, encode_slti(2, 23, cfg->random_bomb_upper_exclusive));
+    patch_imm16((uint32_t *)0x800779c8, cfg->egg_hatch_timer_min);
+    patch_imm16((uint32_t *)0x800779d0, cfg->egg_hatch_timer_max);
+    patch_imm16((uint32_t *)0x80077a24, cfg->vulture_drop_delay_min);
+    patch_imm16((uint32_t *)0x80077a30, cfg->vulture_drop_delay_max);
+    patch_imm16((uint32_t *)0x800772a0, cfg->vulture_approach_timer_initial);
+    patch_imm16((uint32_t *)0x80077804, cfg->vulture_drop_angle_threshold);
+    patch_imm16((uint32_t *)0x800777c0, cfg->vulture_drop_distance_threshold);
+    patch_imm16((uint32_t *)0x80077618, cfg->vulture_drop_population_gate);
+    patch_imm16((uint32_t *)0x8007799c, cfg->random_rocket_lower);
+    patch_imm16((uint32_t *)0x800779a4, cfg->random_bomb_upper_exclusive);
 }
 
 static void gulp_install_hooks(void) {
