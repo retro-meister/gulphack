@@ -35,12 +35,12 @@ static const GulpConfig gulpConfigDefault = {
 
 static const GulpConfig gulpConfigCustom = {
     .egg_hatch_timer_min            = 0x78,
-    .egg_hatch_timer_max            = 0xdc,
-    .vulture_drop_delay_min         = 0x50,
-    .vulture_drop_delay_max         = 0xb4,
+    .egg_hatch_timer_max            = 0x78,
+    .vulture_drop_delay_min         = 0x0,
+    .vulture_drop_delay_max         = 0x0,
     .vulture_approach_timer_initial = 0x03e8,
     .vulture_drop_angle_threshold   = 0x20,
-    .vulture_drop_distance_threshold = 0x708,
+    .vulture_drop_distance_threshold = 3600,
     .vulture_drop_population_gate   = 6,
     .random_rocket_lower            = 81,
     .random_bomb_upper_exclusive    = 41,
@@ -78,31 +78,32 @@ static const GulpDropScript drop_script[GULP_NUM_BIRDS][GULP_BIRD_SCRIPT_LEN] = 
     {
         {  7, BARREL },
         {  1, ROCKET },
-        {  15, BARREL },
+        {  16, ROCKET },
         { 25, ROCKET },
     },
     // Bird 1
     {
         {  5, BARREL },
         { 14, ROCKET },
-        { 20, BOMB },
+        { 6, BOMB },
         { 10, ROCKET },
     },
     // Bird 2
     {
-        { 16, ROCKET },
+        { 15, BARREL },
         { 11, ROCKET },
     },
 };
 
 static int hooks_installed = 0;
 
-// Identifies vultures by their (stable for the duration of one fight attempt)
-// GulpVultureData* pointer, assigning each newly-seen vulture the next free
-// "bird slot" in first-seen order. Returns -1 if the table is full (more than
-// GULP_NUM_BIRDS distinct vultures seen -- shouldn't happen in Gulp).
-static const void *bird_key[GULP_NUM_BIRDS];
-static int         bird_drop_count[GULP_NUM_BIRDS];
+static const void *bird_key[GULP_NUM_BIRDS] = {
+    (const void *)0x80120e44,
+    (const void *)0x80120c64,
+    0,
+};
+
+static int bird_drop_count[GULP_NUM_BIRDS] = { 2, 2, 0 };
 
 static int gulp_get_bird_index(const void *key) {
     for (int i = 0; i < GULP_NUM_BIRDS; i++) {
@@ -202,7 +203,7 @@ static void gulp_apply_config_patches(const GulpConfig *cfg) {
 
 static void gulp_install_hooks(void) {
     gulp_apply_config_patches(config);
-   //gulp_reset_bird_tracking();
+    // gulp_reset_bird_tracking();
     patch_jal((uint32_t *)0x80077490, (uint32_t)gulp_target_hook_trampoline);
     patch_jal((uint32_t *)0x80077838, (uint32_t)gulp_weapon_hook_trampoline);
     hooks_installed = 1;
