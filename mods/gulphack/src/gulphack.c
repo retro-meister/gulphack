@@ -35,9 +35,9 @@ static const GulpConfig gulpConfigDefault = {
 
 static const GulpConfig gulpConfigCustom = {
     .egg_hatch_timer_min            = 0x78,
-    .egg_hatch_timer_max            = 0xdc,
+    .egg_hatch_timer_max            = 0x78,
     .vulture_drop_delay_min         = 0x50,
-    .vulture_drop_delay_max         = 0xb4,
+    .vulture_drop_delay_max         = 0x50,
     .vulture_approach_timer_initial = 0x03e8,
     .vulture_drop_angle_threshold   = 0x20,
     .vulture_drop_distance_threshold = 0x708,
@@ -97,13 +97,21 @@ static const GulpDropScript drop_script[GULP_NUM_BIRDS][GULP_BIRD_SCRIPT_LEN] = 
 
 static int hooks_installed = 0;
 
+// static const void *bird_key[GULP_NUM_BIRDS] = {
+//     (const void *)0x80120e44,
+//     (const void *)0x80120c64,
+//     0,
+// };
+
+// static int bird_drop_count[GULP_NUM_BIRDS] = { 2, 2, 0 };
+
 static const void *bird_key[GULP_NUM_BIRDS] = {
-    (const void *)0x80120e44,
-    (const void *)0x80120c64,
+    0,
+    0,
     0,
 };
 
-static int bird_drop_count[GULP_NUM_BIRDS] = { 2, 2, 0 };
+static int bird_drop_count[GULP_NUM_BIRDS] = { 0, 0, 0 };
 
 static int gulp_get_bird_index(const void *key) {
     for (int i = 0; i < GULP_NUM_BIRDS; i++) {
