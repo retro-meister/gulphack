@@ -17,3 +17,4 @@ psyq-4_7-converted
 __pycache__
 *.elf
 *.map
+*.png
