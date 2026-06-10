@@ -35,9 +35,9 @@ static const GulpConfig gulpConfigDefault = {
 
 static const GulpConfig gulpConfigCustom = {
     .egg_hatch_timer_min            = 0x78,
-    .egg_hatch_timer_max            = 0x78,
+    .egg_hatch_timer_max            = 0xdc,
     .vulture_drop_delay_min         = 0x50,
-    .vulture_drop_delay_max         = 0x50,
+    .vulture_drop_delay_max         = 0xb4,
     .vulture_approach_timer_initial = 0x03e8,
     .vulture_drop_angle_threshold   = 0x20,
     .vulture_drop_distance_threshold = 0x708,
@@ -97,18 +97,10 @@ static const GulpDropScript drop_script[GULP_NUM_BIRDS][GULP_BIRD_SCRIPT_LEN] = 
 
 static int hooks_installed = 0;
 
-// static const void *bird_key[GULP_NUM_BIRDS] = {
-//     (const void *)0x80120e44,
-//     (const void *)0x80120c64,
-//     0,
-// };
-
-// static int bird_drop_count[GULP_NUM_BIRDS] = { 2, 2, 0 };
-
-static const void *bird_key[GULP_NUM_BIRDS] = {
-    0,
-    0,
-    0,
+static const void * const bird_key[GULP_NUM_BIRDS] = {
+    (const void *)0x80120e44,
+    (const void *)0x80120c64,
+    (const void *)0x80120e88,
 };
 
 static int bird_drop_count[GULP_NUM_BIRDS] = { 0, 0, 0 };
@@ -118,17 +110,12 @@ static int gulp_get_bird_index(const void *key) {
         if (bird_key[i] == key) {
             return i;
         }
-        if (bird_key[i] == 0) {
-            bird_key[i] = key;
-            return i;
-        }
     }
     return -1;
 }
 
 static void gulp_reset_bird_tracking(void) {
     for (int i = 0; i < GULP_NUM_BIRDS; i++) {
-        bird_key[i] = 0;
         bird_drop_count[i] = 0;
     }
 }
@@ -211,7 +198,7 @@ static void gulp_apply_config_patches(const GulpConfig *cfg) {
 
 static void gulp_install_hooks(void) {
     gulp_apply_config_patches(config);
-    // gulp_reset_bird_tracking();
+    gulp_reset_bird_tracking();
     patch_jal((uint32_t *)0x80077490, (uint32_t)gulp_target_hook_trampoline);
     patch_jal((uint32_t *)0x80077838, (uint32_t)gulp_weapon_hook_trampoline);
     hooks_installed = 1;
