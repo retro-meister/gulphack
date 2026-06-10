@@ -1,4 +1,4 @@
-local MOVIE = "/Users/retro/repos/psx-modding-toolchain/games/gulphack/redux_scripts/movies/gulp_phase1.pcsxmv"
+local MOVIE = "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv"
 local TARGET_FRAME = nil
 
 local RNG_ADDR = 0x8006d144
@@ -30,6 +30,11 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
 }
 
 local S = _G.GulpRngLoop
+
+S.egg_count = S.egg_count or 0
+if not S.bird_dropped then
+    S.bird_dropped = { [0] = false, [1] = false, [2] = false }
+end
 
 math.randomseed(tonumber(ffi.cast('uint32_t', PCSX.getCPUCycles())))
 
@@ -88,9 +93,7 @@ local function birdLabelFromAddr(birdAddr)
 end
 
 local function resetBirdDropped()
-    S.bird_dropped[0] = false
-    S.bird_dropped[1] = false
-    S.bird_dropped[2] = false
+    S.bird_dropped = { [0] = false, [1] = false, [2] = false }
 end
 
 local function onDropLocationSelected()
@@ -158,9 +161,6 @@ local function onEggSpawned()
         "egg spawn: bird=%s random_delay=%d hatch_timer=%d drop=%s frame=%d",
         birdLabelFromAddr(birdAddr), randomDelay, hatchTimer, dropLabel, frame
     ))
-    if S.egg_count == 1 then
-        PCSX.pauseEmulator()
-    end
     if S.egg_count == S.bird_count then
         restartPlayback("All tracked birds spawned eggs - reloading")
     end
