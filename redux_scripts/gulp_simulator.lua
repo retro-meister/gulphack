@@ -1,10 +1,10 @@
 local MOVIE = "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv"
-local DISABLE_RENDER = true
+local DISABLE_RENDER = false
 
 local RNG_ADDR = 0x8006d144
-local RENDER_PATCH_ADDR = 0x80011afc
-local RENDER_PATCH_VANILLA = 0x0c0055bf
-local RENDER_PATCH_NOP = 0x00000000
+local RENDER_PATCH_SITES = {
+    { addr = 0x80011afc, vanilla = 0x0c0055bf, patch = 0x00000000 },
+}
 
 local MOBY_ARRAY_PTR_ADDR = 0x80066f14
 local GAME_MOBY_ARRAY_ADDR = 0x801169a0
@@ -20,7 +20,7 @@ local MOBY_POS_Z = 0x14
 local MOBY_YAW = 0x46
 
 local SIN_TABLE_ADDR = 0x80061bd8
-local CAM_POS_ADDR = 0x80067eb8
+local CAMERA_POSITION_ADDR = 0x80067eac
 local CAM_YAW_ADDR = 0x80067ecc
 local SIN_TABLE_SCALE = 4096
 
@@ -47,9 +47,6 @@ local GULP_POS_Z = 0x14
 local GULP_YAW = 0x46
 local GULP_COLOR = 0xFF00FF00
 
-local CAM_POS_X = 0x00
-local CAM_POS_Y = 0x04
-local CAM_POS_Z = 0x08
 local CAM_COLOR = 0xFF00FFFF
 
 local EGG_DATA_DROP_X = 0x04
@@ -187,7 +184,9 @@ local function writeRam32(addr, value)
 end
 
 local function setRenderPatch(enabled)
-    writeRam32(RENDER_PATCH_ADDR, enabled and RENDER_PATCH_NOP or RENDER_PATCH_VANILLA)
+    for _, site in ipairs(RENDER_PATCH_SITES) do
+        writeRam32(site.addr, enabled and site.patch or site.vanilla)
+    end
 end
 
 local function isKusegPtr(addr)
@@ -452,8 +451,12 @@ local function mapCameraRotationYaw256()
     return bit.band(0x40 - readCameraYaw256(), 0xff)
 end
 
+local function readVec3(addr)
+    return readRam32s(addr), readRam32s(addr + 4), readRam32s(addr + 8)
+end
+
 local function readCameraPos()
-    return readRam32s(CAM_POS_ADDR + CAM_POS_X), readRam32s(CAM_POS_ADDR + CAM_POS_Y), readRam32s(CAM_POS_ADDR + CAM_POS_Z)
+    return readVec3(CAMERA_POSITION_ADDR)
 end
 
 local function sinCos256(yaw)
