@@ -1,11 +1,10 @@
 local MOVIE = "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv"
-local DISABLE_RENDER = false
+local DISABLE_RENDER = true
 
 local RNG_ADDR = 0x8006d144
-local RENDER_PATCH_SITES = {
-    { addr = 0x80015710, vanilla = 0xafb00010, patch = 0x08005636 },
-    { addr = 0x8001598c, vanilla = 0x0c015728, patch = 0x0800566d },
-}
+local RENDER_PATCH_ADDR = 0x80011afc
+local RENDER_PATCH_VANILLA = 0x0c0055bf
+local RENDER_PATCH_NOP = 0x00000000
 
 local MOBY_ARRAY_PTR_ADDR = 0x80066f14
 local GAME_MOBY_ARRAY_ADDR = 0x801169a0
@@ -125,6 +124,7 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
     claimedDropTargets = {},
     birdDropTarget = {},
     eggedDropTargets = {},
+    simulation_count = 0,
 }
 
 local S = _G.GulpRngLoop
@@ -139,6 +139,7 @@ end
 if not S.eggedDropTargets then
     S.eggedDropTargets = {}
 end
+S.simulation_count = S.simulation_count or S.reset_count or 0
 
 local bit = require('bit')
 
@@ -186,9 +187,7 @@ local function writeRam32(addr, value)
 end
 
 local function setRenderPatch(enabled)
-    for _, site in ipairs(RENDER_PATCH_SITES) do
-        writeRam32(site.addr, enabled and site.patch or site.vanilla)
-    end
+    writeRam32(RENDER_PATCH_ADDR, enabled and RENDER_PATCH_NOP or RENDER_PATCH_VANILLA)
 end
 
 local function isKusegPtr(addr)
@@ -875,6 +874,7 @@ end
 local restartPlayback, startPlayback
 
 startPlayback = function()
+    print(string.format("RNG loop starting (simulation count: %d)", S.simulation_count))
     S.bird_count = 0
     S.egg_count = 0
     S.mobyByVultureData = {}
@@ -903,6 +903,7 @@ restartPlayback = function(reason)
     S.wasPlaying = false
     PCSX.Movie.stop()
     print(reason)
+    S.simulation_count = S.simulation_count + 1
     PCSX.nextTick(startPlayback)
 end
 
