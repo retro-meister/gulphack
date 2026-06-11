@@ -77,9 +77,9 @@ local EGG_DATA_DROP_ID = 0x0c
 local EGG_OUTLINE_COLOR = 0xFF4488FF
 
 local BIRDS = {
-    { moby = 0x80116a50, data = 0x80120e44, id = 0, color = 0xFF0000FF, forceDrop = nil },
-    { moby = 0x801169f8, data = 0x80120c64, id = 1, color = 0xFF00FF00, forceDrop = nil },
-    { moby = 0x80116b00, data = 0x80120e88, id = 2, color = 0xFFFF0000, forceDrop = nil },
+    { moby = 0x80116a50, data = 0x80120e44, id = 0, color = 0xFF0000FF, forceDrop = nil, forceWeapon = nil },
+    { moby = 0x801169f8, data = 0x80120c64, id = 1, color = 0xFF00FF00, forceDrop = nil, forceWeapon = nil },
+    { moby = 0x80116b00, data = 0x80120e88, id = 2, color = 0xFFFF0000, forceDrop = nil, forceWeapon = nil },
 }
 
 local BIRDS_BY_DATA = {}
@@ -103,6 +103,7 @@ local MAP = {
 }
 local VULTURE_MAP_MIN_Z = 20000
 local DROP_TARGET_ROLL_BP = 0x80077498
+local DROP_WEAPON_ROLL_BP = 0x8007783c
 local DROP_LOCATION_BP = 0x80077448
 local VULTURE_RESET_BP = 0x8007742c
 local EGG_SPAWN_BP = 0x80077a48
@@ -112,6 +113,23 @@ local DROP_IDS = {
     [0x197] = "BOMB",
     [0x198] = "ROCKET",
 }
+
+local WEAPON_FORCE_ROLLS = {
+    bomb = 20,
+    barrel = 60,
+    rocket = 90,
+}
+local WEAPON_FORCE_KEYS = { nil, 'barrel', 'bomb', 'rocket' }
+local WEAPON_FORCE_COMBO_ITEMS = 'None\0Barrel\0Bomb\0Rocket\0'
+
+local function weaponForceComboIndex(forceWeapon)
+    for i, key in ipairs(WEAPON_FORCE_KEYS) do
+        if key == forceWeapon then
+            return i - 1
+        end
+    end
+    return 0
+end
 
 _G.GulpRngLoop = _G.GulpRngLoop or {
     listeners = {},
@@ -123,6 +141,7 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
     egg_count = 0,
     bird_dropped = { [0] = false, [1] = false, [2] = false },
     forceDropBreakpoint = nil,
+    forceWeaponBreakpoint = nil,
     breakpoints = {},
     fixedMapBounds = nil,
     claimedDropTargets = {},
@@ -556,7 +575,7 @@ local function drawGulpMapFrame()
     imgui.SetNextWindowSize(480, 520, imgui.constant.Cond.FirstUseEver)
     imgui.safe.Begin('Gulp map', true, function()
         local cw, ch = imgui.GetContentRegionAvail()
-        local optionsH = imgui.GetFrameHeightWithSpacing() * (4 + #BIRDS)
+        local optionsH = imgui.GetFrameHeightWithSpacing() * (5 + #BIRDS)
         local mapH = ch - optionsH - 4
         if cw < 32 or mapH < 32 then
             return
@@ -623,7 +642,7 @@ local function drawGulpMapFrame()
                 imgui.SameLine()
             end
             imgui.AlignTextToFramePadding()
-            imgui.TextUnformatted(string.format('bird %d force', bird.id))
+            imgui.TextUnformatted(string.format('bird %d loc', bird.id))
             imgui.SameLine()
             local forceTextW = imgui.CalcTextSize('25')
             imgui.SetNextItemWidth(forceTextW + imgui.GetFrameHeight() * 2.75)
@@ -632,6 +651,26 @@ local function drawGulpMapFrame()
             forceChanged, forceUi = imgui.InputInt('##bird_force_' .. bird.id, forceUi, 1, 1)
             if forceChanged then
                 bird.forceDrop = clampForceDrop(forceUi)
+            end
+        end
+        for i, bird in ipairs(BIRDS) do
+            if i > 1 then
+                imgui.SameLine()
+            end
+            imgui.AlignTextToFramePadding()
+            imgui.TextUnformatted(string.format('bird %d drop', bird.id))
+            imgui.SameLine()
+            local weaponComboW = imgui.CalcTextSize('Rocket')
+            imgui.SetNextItemWidth(weaponComboW + imgui.GetFrameHeight() * 1.5)
+            local weaponIndex = weaponForceComboIndex(bird.forceWeapon)
+            local weaponChanged
+            weaponChanged, weaponIndex = imgui.Combo(
+                '##bird_weapon_' .. bird.id,
+                weaponIndex,
+                WEAPON_FORCE_COMBO_ITEMS
+            )
+            if weaponChanged then
+                bird.forceWeapon = WEAPON_FORCE_KEYS[weaponIndex + 1]
             end
         end
         local gulpX, gulpY, gulpZ = readMobyXYZ(GULP_ADDR)
@@ -791,6 +830,41 @@ local function onDropTargetRoll()
     return true
 end
 
+local function applyForcedWeaponRoll(regs, bird)
+    local naturalRoll = regs.v0
+    local key = bird and bird.forceWeapon
+    if key == nil then
+        return naturalRoll, naturalRoll
+    end
+    local forced = WEAPON_FORCE_ROLLS[key]
+    if forced == nil then
+        return naturalRoll, naturalRoll
+    end
+    regs.v0 = forced
+    return forced, naturalRoll
+end
+
+local function onWeaponRoll()
+    local regs = PCSX.getRegisters().GPR.n
+    local birdData = regs.s2
+    local bird = BIRDS_BY_DATA[birdData]
+    local roll, naturalRoll = applyForcedWeaponRoll(regs, bird)
+    local birdLabel = birdLabelFromData(birdData)
+    local frame = PCSX.Movie.getFrame()
+    if roll ~= naturalRoll then
+        print(string.format(
+            "weapon roll: bird=%s roll=%d (forced from %d) frame=%d",
+            birdLabel, roll, naturalRoll, frame
+        ))
+    else
+        print(string.format(
+            "weapon roll: bird=%s roll=%d frame=%d",
+            birdLabel, roll, frame
+        ))
+    end
+    return true
+end
+
 local function onDropLocationSelected()
     local regs = PCSX.getRegisters().GPR.n
     local birdData = regs.s2
@@ -865,6 +939,10 @@ unregisterForceDropBreakpoint = function()
     if S.forceDropBreakpoint then
         S.forceDropBreakpoint:remove()
         S.forceDropBreakpoint = nil
+    end
+    if S.forceWeaponBreakpoint then
+        S.forceWeaponBreakpoint:remove()
+        S.forceWeaponBreakpoint = nil
     end
 end
 
@@ -986,12 +1064,16 @@ local function onVultureReset()
 end
 
 registerForceDropBreakpoint = function()
-    if S.forceDropBreakpoint then
-        return
+    if not S.forceDropBreakpoint then
+        S.forceDropBreakpoint = PCSX.addBreakpoint(
+            DROP_TARGET_ROLL_BP, 'Exec', 4, '', onDropTargetRoll, 'gulp drop target roll'
+        )
     end
-    S.forceDropBreakpoint = PCSX.addBreakpoint(
-        DROP_TARGET_ROLL_BP, 'Exec', 4, '', onDropTargetRoll, 'gulp drop target roll'
-    )
+    if not S.forceWeaponBreakpoint then
+        S.forceWeaponBreakpoint = PCSX.addBreakpoint(
+            DROP_WEAPON_ROLL_BP, 'Exec', 4, '', onWeaponRoll, 'gulp weapon roll'
+        )
+    end
 end
 
 registerSimulationBreakpoints = function()
