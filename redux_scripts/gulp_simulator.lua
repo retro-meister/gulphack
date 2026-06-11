@@ -1,9 +1,9 @@
 local CYCLE_COUNT = 4
 local MOVIES = {
     "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv",
-    "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv",
-    "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv",
-    "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv",
+    "/Users/retro/repos/pcsx-redux/movies/gulp_phase2.pcsxmv",
+    "/Users/retro/repos/pcsx-redux/movies/gulp_phase3.pcsxmv",
+    "/Users/retro/repos/pcsx-redux/movies/gulp_phase4.pcsxmv",
 }
 local AUTO_RESTART_PLAYBACK = true
 local RUN_SIMULATIONS = true
@@ -21,6 +21,7 @@ local function clampCycle(cycle)
     end
     return cycle
 end
+
 local RNG_ADDR = 0x8006d144
 local RENDER_PATCH_SITES = {
     { addr = 0x80011afc, vanilla = 0x0c0055bf, patch = 0x00000000 },
@@ -47,6 +48,19 @@ local DROP_TARGET_POS_Y = 0x04
 local DROP_TARGET_HOME = 0
 local DROP_TARGET_FIRST = 1
 local DROP_TARGET_LAST = 25
+
+local function clampForceDrop(value)
+    if value <= 0 then
+        return nil
+    end
+    if value < DROP_TARGET_FIRST then
+        return DROP_TARGET_FIRST
+    end
+    if value > DROP_TARGET_LAST then
+        return DROP_TARGET_LAST
+    end
+    return value
+end
 
 local SPYRO_ADDR = 0x80069ff0
 local SPYRO_COLOR = 0xFFAA00FF
@@ -108,6 +122,7 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
     bird_count = 0,
     egg_count = 0,
     bird_dropped = { [0] = false, [1] = false, [2] = false },
+    forceDropBreakpoint = nil,
     breakpoints = {},
     fixedMapBounds = nil,
     claimedDropTargets = {},
@@ -529,7 +544,10 @@ end
 
 local switchActiveCycle
 local startSimulations, stopSimulations
-local registerBreakpoints
+local registerForceDropBreakpoint
+local registerSimulationBreakpoints
+local unregisterForceDropBreakpoint
+local unregisterSimulationBreakpoints
 
 local function drawGulpMapFrame()
     if not S.loopActive then
@@ -538,7 +556,7 @@ local function drawGulpMapFrame()
     imgui.SetNextWindowSize(480, 520, imgui.constant.Cond.FirstUseEver)
     imgui.safe.Begin('Gulp map', true, function()
         local cw, ch = imgui.GetContentRegionAvail()
-        local optionsH = imgui.GetFrameHeightWithSpacing()
+        local optionsH = imgui.GetFrameHeightWithSpacing() * (4 + #BIRDS)
         local mapH = ch - optionsH - 4
         if cw < 32 or mapH < 32 then
             return
@@ -600,6 +618,22 @@ local function drawGulpMapFrame()
         if healthChanged then
             setHealthPatch(MAP.infiniteHealth)
         end
+        for i, bird in ipairs(BIRDS) do
+            if i > 1 then
+                imgui.SameLine()
+            end
+            imgui.AlignTextToFramePadding()
+            imgui.TextUnformatted(string.format('bird %d force', bird.id))
+            imgui.SameLine()
+            local forceTextW = imgui.CalcTextSize('25')
+            imgui.SetNextItemWidth(forceTextW + imgui.GetFrameHeight() * 2.75)
+            local forceUi = bird.forceDrop or 0
+            local forceChanged
+            forceChanged, forceUi = imgui.InputInt('##bird_force_' .. bird.id, forceUi, 1, 1)
+            if forceChanged then
+                bird.forceDrop = clampForceDrop(forceUi)
+            end
+        end
         local gulpX, gulpY, gulpZ = readMobyXYZ(GULP_ADDR)
         imgui.TextUnformatted(string.format('spyro: x=%d y=%d z=%d', spyroX, spyroY, spyroZ))
         imgui.TextUnformatted(string.format('gulp: x=%d y=%d z=%d', gulpX, gulpY, gulpZ))
@@ -657,10 +691,8 @@ end
 local function teardown()
     restoreRenderPatch()
     restoreHealthPatch()
-    for _, bp in ipairs(S.breakpoints) do
-        bp:remove()
-    end
-    S.breakpoints = {}
+    unregisterForceDropBreakpoint()
+    unregisterSimulationBreakpoints()
     for _, listener in ipairs(S.listeners) do
         listener:remove()
     end
@@ -808,7 +840,7 @@ startPlayback = function()
         printError(string.format("Movie.play failed: cycle %d %s", S.activeCycle, movie))
         S.wasPlaying = false
         S.loadedMoviePath = nil
-        unregisterBreakpoints()
+        unregisterSimulationBreakpoints()
         MAP.runSimulations = false
     else
         S.wasPlaying = true
@@ -829,7 +861,14 @@ end
 
 S.switchActiveCycle = switchActiveCycle
 
-local function unregisterBreakpoints()
+unregisterForceDropBreakpoint = function()
+    if S.forceDropBreakpoint then
+        S.forceDropBreakpoint:remove()
+        S.forceDropBreakpoint = nil
+    end
+end
+
+unregisterSimulationBreakpoints = function()
     for _, bp in ipairs(S.breakpoints) do
         bp:remove()
     end
@@ -841,14 +880,14 @@ stopSimulations = function()
     S.patchRngOnLoad = false
     S.loadedMoviePath = nil
     PCSX.Movie.stop()
-    unregisterBreakpoints()
+    unregisterSimulationBreakpoints()
     resetRunState()
 end
 
 startSimulations = function()
     S.loadedMoviePath = nil
     if #S.breakpoints == 0 then
-        registerBreakpoints()
+        registerSimulationBreakpoints()
     end
     startPlayback()
 end
@@ -946,9 +985,17 @@ local function onVultureReset()
     return true
 end
 
-registerBreakpoints = function()
+registerForceDropBreakpoint = function()
+    if S.forceDropBreakpoint then
+        return
+    end
+    S.forceDropBreakpoint = PCSX.addBreakpoint(
+        DROP_TARGET_ROLL_BP, 'Exec', 4, '', onDropTargetRoll, 'gulp drop target roll'
+    )
+end
+
+registerSimulationBreakpoints = function()
     S.breakpoints = {
-        PCSX.addBreakpoint(DROP_TARGET_ROLL_BP, 'Exec', 4, '', onDropTargetRoll, 'gulp drop target roll'),
         PCSX.addBreakpoint(DROP_LOCATION_BP, 'Exec', 4, '', onDropLocationSelected, 'gulp drop location'),
         PCSX.addBreakpoint(VULTURE_RESET_BP, 'Exec', 4, '', onVultureReset, 'gulp vulture reset'),
         PCSX.addBreakpoint(EGG_SPAWN_BP, 'Exec', 4, '', onEggSpawned, 'gulp egg spawn'),
@@ -989,10 +1036,11 @@ local function main()
     S.loopActive = true
     registerMapUi()
     registerListeners()
+    registerForceDropBreakpoint()
     applyRenderPatch()
     applyHealthPatch()
     if MAP.runSimulations then
-        registerBreakpoints()
+        registerSimulationBreakpoints()
         print(string.format(
             "RNG movie loop starting: fight cycle %d %s (render %s, infinite health %s, auto-restart %s)",
             S.activeCycle,
