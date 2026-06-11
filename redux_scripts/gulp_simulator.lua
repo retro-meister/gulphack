@@ -24,23 +24,17 @@ local DROP_TARGET_FIRST = 1
 local DROP_TARGET_LAST = 25
 
 local SPYRO_ADDR = 0x80069ff0
-local SPYRO_POS_X = 0x00
-local SPYRO_POS_Y = 0x04
-local SPYRO_POS_Z = 0x08
-local SPYRO_YAW = 0x0e
 local SPYRO_COLOR = 0xFFAA00FF
 
 local GULP_ADDR = 0x801169a0
-local GULP_POS_X = 0x0c
-local GULP_POS_Y = 0x10
-local GULP_POS_Z = 0x14
-local GULP_YAW = 0x46
 local GULP_COLOR = 0xFF00FF00
 
 local CAM_COLOR = 0xFF00FFFF
 
 local EGG_DATA_DROP_X = 0x04
 local EGG_DATA_DROP_Y = 0x06
+local EGG_DATA_HATCH_TIMER = 0x0a
+local EGG_DATA_DROP_ID = 0x0c
 local EGG_OUTLINE_COLOR = 0xFF4488FF
 
 local BIRDS = {
@@ -55,7 +49,6 @@ for _, bird in ipairs(BIRDS) do
 end
 
 local MAP = {
-    enabled = true,
     worldMinX = -2800,
     worldMaxX = 2800,
     worldMinY = -2800,
@@ -158,38 +151,45 @@ local function setRenderPatch(enabled)
     end
 end
 
-local function isKusegPtr(addr)
-    addr = tonumber(addr)
-    if not addr or addr == 0 then
-        return false
-    end
-    return bit.rshift(addr, 24) == 0x80
+local function readMobyXYZ(addr, posX, posY, posZ)
+    posX = posX or MOBY_POS_X
+    posY = posY or MOBY_POS_Y
+    posZ = posZ or MOBY_POS_Z
+    return readRam32s(addr + posX), readRam32s(addr + posY), readRam32s(addr + posZ)
+end
+
+local function readMobyXY(addr, posX, posY)
+    posX = posX or MOBY_POS_X
+    posY = posY or MOBY_POS_Y
+    return readRam32s(addr + posX), readRam32s(addr + posY)
+end
+
+local function readMobyYaw(addr, yawOff)
+    return readRam8(addr + (yawOff or MOBY_YAW))
 end
 
 local function collectBirdPositions()
     local birds = {}
     for _, bird in ipairs(BIRDS) do
-        local moby = bird.moby
+        local x, y, z = readMobyXYZ(bird.moby)
         birds[#birds + 1] = {
             id = bird.id,
             color = bird.color,
-            x = readRam32s(moby + MOBY_POS_X),
-            y = readRam32s(moby + MOBY_POS_Y),
-            z = readRam32s(moby + MOBY_POS_Z),
-            yaw = readRam8(moby + MOBY_YAW),
+            x = x,
+            y = y,
+            z = z,
+            yaw = readMobyYaw(bird.moby),
         }
     end
     return birds
 end
 
 local function getDropTargetPathTable()
-    for _, bird in ipairs(BIRDS) do
-        local pathTable = readRam32(bird.data + GULP_VULTURE_PATH_TABLE)
-        if isKusegPtr(pathTable) then
-            return pathTable
-        end
+    local pathTable = readRam32(BIRDS[1].data + GULP_VULTURE_PATH_TABLE)
+    if pathTable == 0 then
+        return nil
     end
-    return nil
+    return pathTable
 end
 
 local function readDropTargetEntry(pathTable, index)
@@ -203,7 +203,7 @@ end
 
 local function collectDropTargets()
     local pathTable = getDropTargetPathTable()
-    if not isKusegPtr(pathTable) then
+    if not pathTable then
         return nil, {}
     end
     local tableCount = readRam16(pathTable)
@@ -262,12 +262,6 @@ local function getMapBounds(dropHome, dropTargets)
         end
     end
     return MAP.worldMinX, MAP.worldMinY, MAP.worldMaxX, MAP.worldMaxY
-end
-
-local function worldToScreen(x, y, minX, minY, maxX, maxY, cx, cy, cw, ch)
-    local u = (x - minX) / (maxX - minX)
-    local v = (y - minY) / (maxY - minY)
-    return cx + (1 - u) * cw, cy + v * ch
 end
 
 local function readCameraYaw256()
@@ -442,34 +436,20 @@ local function drawMapArrow(sx, sy, dirX, dirY, color, size, label, ctx)
     end
 end
 
-local function readSpyroPos()
-    local base = SPYRO_ADDR
-    return readRam32s(base + SPYRO_POS_X), readRam32s(base + SPYRO_POS_Y), readRam32s(base + SPYRO_POS_Z)
-end
-
-local function readGulpPos()
-    return readRam32s(GULP_ADDR + GULP_POS_X), readRam32s(GULP_ADDR + GULP_POS_Y), readRam32s(GULP_ADDR + GULP_POS_Z)
-end
-
-local function drawMapGulp(ctx)
-    local x, y = readGulpPos()
+local function drawMapArrowAtWorld(ctx, x, y, yaw, color, size, label)
     local sx, sy = mapWorldToScreen(x, y, ctx)
-    local dirX, dirY = yawToWorldDir(readRam8(GULP_ADDR + GULP_YAW))
-    drawMapArrow(sx, sy, dirX, dirY, GULP_COLOR, 18, nil, ctx)
+    local dirX, dirY = yawToWorldDir(yaw)
+    drawMapArrow(sx, sy, dirX, dirY, color, size, label, ctx)
 end
 
-local function drawMapSpyro(ctx)
-    local x, y = readSpyroPos()
-    local sx, sy = mapWorldToScreen(x, y, ctx)
-    local dirX, dirY = yawToWorldDir(readRam8(SPYRO_ADDR + SPYRO_YAW))
-    drawMapArrow(sx, sy, dirX, dirY, SPYRO_COLOR, 16, nil, ctx)
+local function drawMapMoby(ctx, addr, color, size, label, yawOff, posX, posY)
+    local x, y = readMobyXY(addr, posX, posY)
+    drawMapArrowAtWorld(ctx, x, y, readMobyYaw(addr, yawOff), color, size, label)
 end
 
 local function drawMapCamera(ctx)
     local x, y = readCameraPos()
-    local sx, sy = mapWorldToScreen(x, y, ctx)
-    local dirX, dirY = yawToWorldDir(readCameraYaw256())
-    drawMapArrow(sx, sy, dirX, dirY, CAM_COLOR, 16, nil, ctx)
+    drawMapArrowAtWorld(ctx, x, y, readCameraYaw256(), CAM_COLOR, 16, nil)
 end
 
 local function drawMapDropTargets(dropHome, targets, ctx)
@@ -484,15 +464,13 @@ end
 local function drawMapMarkers(birds, ctx)
     for _, bird in ipairs(birds) do
         if bird.z >= VULTURE_MAP_MIN_Z then
-            local sx, sy = mapWorldToScreen(bird.x, bird.y, ctx)
-            local dirX, dirY = yawToWorldDir(bird.yaw or 0)
-            drawMapArrow(sx, sy, dirX, dirY, bird.color, 14, tostring(bird.id), ctx)
+            drawMapArrowAtWorld(ctx, bird.x, bird.y, bird.yaw or 0, bird.color, 14, tostring(bird.id))
         end
     end
 end
 
 local function drawGulpMapFrame()
-    if not S.loopActive or not MAP.enabled then
+    if not S.loopActive then
         return
     end
     imgui.SetNextWindowSize(480, 520, imgui.constant.Cond.FirstUseEver)
@@ -508,13 +486,13 @@ local function drawGulpMapFrame()
         local birds = collectBirdPositions()
         local dropHome, dropTargets = collectDropTargets()
         local minX, minY, maxX, maxY = getMapBounds(dropHome, dropTargets)
-        local spyroX, spyroY, spyroZ = readSpyroPos()
+        local spyroX, spyroY, spyroZ = readMobyXYZ(SPYRO_ADDR, 0x00, 0x04, 0x08)
         local mapCtx = createMapRenderCtx(minX, minY, maxX, maxY, cx, cy, cw, mapH, spyroX, spyroY)
         drawMapBackground(cx, cy, cw, mapH)
         drawMapDropTargets(dropHome, dropTargets, mapCtx)
         drawMapMarkers(birds, mapCtx)
-        drawMapGulp(mapCtx)
-        drawMapSpyro(mapCtx)
+        drawMapMoby(mapCtx, GULP_ADDR, GULP_COLOR, 18, nil)
+        drawMapMoby(mapCtx, SPYRO_ADDR, SPYRO_COLOR, 16, nil, 0x0e, 0x00, 0x04)
         drawMapCamera(mapCtx)
         local renderChanged
         _, MAP.rotateWithCamera = imgui.Checkbox('Rotate with camera', MAP.rotateWithCamera)
@@ -523,15 +501,11 @@ local function drawGulpMapFrame()
         if renderChanged then
             setRenderPatch(MAP.disableRender)
         end
-        local gulpX, gulpY, gulpZ = readGulpPos()
+        local gulpX, gulpY, gulpZ = readMobyXYZ(GULP_ADDR)
         imgui.TextUnformatted(string.format('spyro: x=%d y=%d z=%d', spyroX, spyroY, spyroZ))
         imgui.TextUnformatted(string.format('gulp: x=%d y=%d z=%d', gulpX, gulpY, gulpZ))
-        if #birds == 0 then
-            imgui.TextUnformatted('no vulture mobys')
-        else
-            for _, bird in ipairs(birds) do
-                imgui.TextUnformatted(string.format('bird %d: x=%d y=%d z=%d', bird.id, bird.x, bird.y, bird.z))
-            end
+        for _, bird in ipairs(birds) do
+            imgui.TextUnformatted(string.format('bird %d: x=%d y=%d z=%d', bird.id, bird.x, bird.y, bird.z))
         end
     end)
 end
@@ -556,6 +530,16 @@ local function patchRng()
     print(string.format("RNG @ 0x%08x set to 0x%08x", RNG_ADDR, state))
 end
 
+local function resetRunState()
+    S.bird_count = 0
+    S.egg_count = 0
+    S.fixedMapBounds = nil
+    S.claimedDropTargets = {}
+    S.birdDropTarget = {}
+    S.eggedDropTargets = {}
+    S.bird_dropped = { [0] = false, [1] = false, [2] = false }
+end
+
 local function teardown()
     restoreRenderPatch()
     if S.dropLocationBp then
@@ -570,10 +554,7 @@ local function teardown()
         listener:remove()
     end
     S.listeners = {}
-    S.fixedMapBounds = nil
-    S.claimedDropTargets = {}
-    S.birdDropTarget = {}
-    S.eggedDropTargets = {}
+    resetRunState()
     DrawImguiFrame = nil
 end
 
@@ -598,17 +579,13 @@ local function birdLabelFromData(dataAddr)
     return bird and tostring(bird.id) or string.format("unknown(0x%08x)", dataAddr)
 end
 
-local function resetBirdDropped()
-    S.bird_dropped = { [0] = false, [1] = false, [2] = false }
-end
-
 local function markEggDropTarget(eggData, birdId)
     local index = birdId ~= nil and S.birdDropTarget[birdId] or nil
     if not index then
         local eggX = readRamI16(eggData + EGG_DATA_DROP_X) * 2
         local eggY = readRamI16(eggData + EGG_DATA_DROP_Y) * 2
         local pathTable = getDropTargetPathTable()
-        if isKusegPtr(pathTable) then
+        if pathTable then
             for i = DROP_TARGET_FIRST, DROP_TARGET_LAST do
                 local target = readDropTargetEntry(pathTable, i)
                 if target.x == eggX and target.y == eggY then
@@ -650,13 +627,7 @@ local restartPlayback, startPlayback
 
 startPlayback = function()
     print(string.format("RNG loop starting (simulation count: %d)", S.simulation_count))
-    S.bird_count = 0
-    S.egg_count = 0
-    S.fixedMapBounds = nil
-    S.claimedDropTargets = {}
-    S.birdDropTarget = {}
-    S.eggedDropTargets = {}
-    resetBirdDropped()
+    resetRunState()
     S.patchRngOnLoad = true
     local ok
     if not S.movieReady then
@@ -686,8 +657,8 @@ local function onEggSpawned()
     local birdData = regs.s2
     local randomDelay = regs.v0
     local eggData = regs.s1
-    local hatchTimer = readRam16(eggData + 0xa)
-    local dropId = readRam16(eggData + 0xc)
+    local hatchTimer = readRam16(eggData + EGG_DATA_HATCH_TIMER)
+    local dropId = readRam16(eggData + EGG_DATA_DROP_ID)
     local dropLabel = DROP_IDS[dropId] or string.format("0x%03x", dropId)
     local bird = BIRDS_BY_DATA[birdData]
     if bird then
