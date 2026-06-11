@@ -76,10 +76,14 @@ local EGG_DATA_HATCH_TIMER = 0x0a
 local EGG_DATA_DROP_ID = 0x0c
 local EGG_OUTLINE_COLOR = 0xFF4488FF
 
+local BARREL = "barrel"
+local BOMB = "bomb"
+local ROCKET = "rocket"
+
 local BIRDS = {
-    { moby = 0x80116a50, data = 0x80120e44, id = 0, color = 0xFF0000FF, forceDrop = nil, forceWeapon = nil },
-    { moby = 0x801169f8, data = 0x80120c64, id = 1, color = 0xFF00FF00, forceDrop = nil, forceWeapon = nil },
-    { moby = 0x80116b00, data = 0x80120e88, id = 2, color = 0xFFFF0000, forceDrop = nil, forceWeapon = nil },
+    { moby = 0x80116a50, data = 0x80120e44, id = 0, color = 0xFF0000FF, forceDrop = 15, forceWeapon = BARREL },
+    { moby = 0x801169f8, data = 0x80120c64, id = 1, color = 0xFF00FF00, forceDrop = 6, forceWeapon = BOMB },
+    { moby = 0x80116b00, data = 0x80120e88, id = 2, color = 0xFFFF0000, forceDrop = 16, forceWeapon = ROCKET },
 }
 
 local BIRDS_BY_DATA = {}
@@ -571,6 +575,7 @@ local function drawMapMarkers(birds, ctx)
 end
 
 local switchActiveCycle
+local restartPlayback, startPlayback
 local startSimulations, stopSimulations
 local registerForceBreakpoints
 local registerSimulationBreakpoints
@@ -628,7 +633,12 @@ local function drawGulpMapFrame()
             switchActiveCycle(S.activeCycle)
         end
         imgui.SameLine()
-        _, MAP.autoRestartPlayback = imgui.Checkbox('Auto-restart', MAP.autoRestartPlayback)
+        local prevAutoRestart = MAP.autoRestartPlayback
+        local autoRestartChanged
+        autoRestartChanged, MAP.autoRestartPlayback = imgui.Checkbox('Auto-restart', MAP.autoRestartPlayback)
+        if autoRestartChanged and MAP.autoRestartPlayback and not prevAutoRestart and S.loopActive then
+            restartPlayback("Auto-restart enabled, restarting...")
+        end
         if not MAP.runSimulations then
             imgui.EndDisabled()
         end
@@ -895,8 +905,6 @@ local function onDropLocationSelected()
     ))
     return true
 end
-
-local restartPlayback, startPlayback
 
 startPlayback = function()
     if not MAP.runSimulations then
