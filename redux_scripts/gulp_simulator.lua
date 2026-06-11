@@ -6,6 +6,7 @@ local MOVIES = {
     "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv",
 }
 local AUTO_RESTART_PLAYBACK = true
+local RUN_SIMULATIONS = true
 
 local function movieForCycle(cycle)
     return MOVIES[cycle]
@@ -82,6 +83,7 @@ local MAP = {
     disableRender = false,
     infiniteHealth = true,
     autoRestartPlayback = true,
+    runSimulations = true,
     scale = 1.2,
     sprite = nil,
 }
@@ -122,6 +124,7 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
 local S = _G.GulpRngLoop
 
 MAP.autoRestartPlayback = AUTO_RESTART_PLAYBACK
+MAP.runSimulations = RUN_SIMULATIONS
 S.activeCycle = clampCycle(S.activeCycle or 1)
 
 S.egg_count = S.egg_count or 0
@@ -525,6 +528,8 @@ local function drawMapMarkers(birds, ctx)
 end
 
 local switchActiveCycle
+local startSimulations, stopSimulations
+local registerBreakpoints
 
 local function drawGulpMapFrame()
     if not S.loopActive then
@@ -551,6 +556,19 @@ local function drawGulpMapFrame()
         drawMapMoby(mapCtx, GULP_ADDR, GULP_COLOR, 18, nil)
         drawMapMoby(mapCtx, SPYRO_ADDR, SPYRO_COLOR, 16, nil, 0x0e, 0x00, 0x04)
         drawMapCamera(mapCtx)
+        local simChanged
+        simChanged, MAP.runSimulations = imgui.Checkbox('Run simulations', MAP.runSimulations)
+        if simChanged then
+            if MAP.runSimulations then
+                startSimulations()
+            else
+                stopSimulations()
+            end
+        end
+        imgui.SameLine()
+        if not MAP.runSimulations then
+            imgui.BeginDisabled(true)
+        end
         local prevCycle = S.activeCycle
         imgui.AlignTextToFramePadding()
         imgui.TextUnformatted('Cycle')
@@ -562,6 +580,11 @@ local function drawGulpMapFrame()
         S.activeCycle = clampCycle(S.activeCycle)
         if cycleChanged and S.activeCycle ~= prevCycle then
             switchActiveCycle(S.activeCycle)
+        end
+        imgui.SameLine()
+        _, MAP.autoRestartPlayback = imgui.Checkbox('Auto-restart', MAP.autoRestartPlayback)
+        if not MAP.runSimulations then
+            imgui.EndDisabled()
         end
         imgui.SameLine()
         local renderChanged
@@ -577,8 +600,6 @@ local function drawGulpMapFrame()
         if healthChanged then
             setHealthPatch(MAP.infiniteHealth)
         end
-        imgui.SameLine()
-        _, MAP.autoRestartPlayback = imgui.Checkbox('Auto-restart', MAP.autoRestartPlayback)
         local gulpX, gulpY, gulpZ = readMobyXYZ(GULP_ADDR)
         imgui.TextUnformatted(string.format('spyro: x=%d y=%d z=%d', spyroX, spyroY, spyroZ))
         imgui.TextUnformatted(string.format('gulp: x=%d y=%d z=%d', gulpX, gulpY, gulpZ))
@@ -763,6 +784,9 @@ end
 local restartPlayback, startPlayback
 
 startPlayback = function()
+    if not MAP.runSimulations then
+        return
+    end
     local movie = movieForCycle(S.activeCycle)
     print(string.format(
         "RNG loop starting: fight cycle %d (simulation count: %d)",
@@ -782,7 +806,10 @@ startPlayback = function()
     end
     if not ok then
         printError(string.format("Movie.play failed: cycle %d %s", S.activeCycle, movie))
-        stopLoop()
+        S.wasPlaying = false
+        S.loadedMoviePath = nil
+        unregisterBreakpoints()
+        MAP.runSimulations = false
     else
         S.wasPlaying = true
     end
@@ -795,14 +822,41 @@ switchActiveCycle = function(newCycle)
     S.loadedMoviePath = nil
     S.simulation_count = 0
     print(string.format("Switched to fight cycle %d: %s", S.activeCycle, movieForCycle(S.activeCycle)))
-    if S.loopActive then
+    if S.loopActive and MAP.runSimulations then
         startPlayback()
     end
 end
 
 S.switchActiveCycle = switchActiveCycle
 
+local function unregisterBreakpoints()
+    for _, bp in ipairs(S.breakpoints) do
+        bp:remove()
+    end
+    S.breakpoints = {}
+end
+
+stopSimulations = function()
+    S.wasPlaying = false
+    S.patchRngOnLoad = false
+    S.loadedMoviePath = nil
+    PCSX.Movie.stop()
+    unregisterBreakpoints()
+    resetRunState()
+end
+
+startSimulations = function()
+    S.loadedMoviePath = nil
+    if #S.breakpoints == 0 then
+        registerBreakpoints()
+    end
+    startPlayback()
+end
+
 restartPlayback = function(reason)
+    if not MAP.runSimulations then
+        return
+    end
     S.wasPlaying = false
     PCSX.Movie.stop()
     print(reason)
@@ -815,6 +869,9 @@ restartPlayback = function(reason)
 end
 
 local function tryCompleteCycle()
+    if not MAP.runSimulations then
+        return
+    end
     if not next(S.cycle_spawned) then
         return
     end
@@ -889,7 +946,7 @@ local function onVultureReset()
     return true
 end
 
-local function registerBreakpoints()
+registerBreakpoints = function()
     S.breakpoints = {
         PCSX.addBreakpoint(DROP_TARGET_ROLL_BP, 'Exec', 4, '', onDropTargetRoll, 'gulp drop target roll'),
         PCSX.addBreakpoint(DROP_LOCATION_BP, 'Exec', 4, '', onDropLocationSelected, 'gulp drop location'),
@@ -902,24 +959,24 @@ local function registerListeners()
     S.listeners[#S.listeners + 1] = PCSX.Events.createEventListener("ExecutionFlow::SaveStateLoaded", function()
         applyRenderPatch()
         applyHealthPatch()
-        if S.patchRngOnLoad then
+        if MAP.runSimulations and S.patchRngOnLoad then
             patchRng()
             S.patchRngOnLoad = false
         end
     end)
 
     S.listeners[#S.listeners + 1] = PCSX.Events.createEventListener("Movie::PlaybackFinished", function()
-        if not S.loopActive or not S.wasPlaying then return end
+        if not MAP.runSimulations or not S.loopActive or not S.wasPlaying then return end
         restartPlayback("Movie finished, restarting...")
     end)
 
     S.listeners[#S.listeners + 1] = PCSX.Events.createEventListener("ExecutionFlow::Reset", function(event)
-        if not S.loopActive then return end
+        if not MAP.runSimulations or not S.loopActive then return end
         stopLoop(event.hard and "Hard reset, RNG loop stopped" or "Soft reset, RNG loop stopped")
     end)
 
     S.listeners[#S.listeners + 1] = PCSX.Events.createEventListener("ExecutionFlow::Pause", function(event)
-        if not S.loopActive or not event.exception then return end
+        if not MAP.runSimulations or not S.loopActive or not event.exception then return end
         stopLoop("Emulation exception, RNG loop stopped")
     end)
 end
@@ -932,18 +989,26 @@ local function main()
     S.loopActive = true
     registerMapUi()
     registerListeners()
-    registerBreakpoints()
     applyRenderPatch()
     applyHealthPatch()
-    print(string.format(
-        "RNG movie loop starting: fight cycle %d %s (render %s, infinite health %s, auto-restart %s)",
-        S.activeCycle,
-        movieForCycle(S.activeCycle),
-        MAP.disableRender and "disabled" or "enabled",
-        MAP.infiniteHealth and "on" or "off",
-        MAP.autoRestartPlayback and "on" or "off"
-    ))
-    startPlayback()
+    if MAP.runSimulations then
+        registerBreakpoints()
+        print(string.format(
+            "RNG movie loop starting: fight cycle %d %s (render %s, infinite health %s, auto-restart %s)",
+            S.activeCycle,
+            movieForCycle(S.activeCycle),
+            MAP.disableRender and "disabled" or "enabled",
+            MAP.infiniteHealth and "on" or "off",
+            MAP.autoRestartPlayback and "on" or "off"
+        ))
+        startPlayback()
+    else
+        print(string.format(
+            "Gulp map active (simulations off, render %s, infinite health %s)",
+            MAP.disableRender and "disabled" or "enabled",
+            MAP.infiniteHealth and "on" or "off"
+        ))
+    end
 end
 
 S.main = main
