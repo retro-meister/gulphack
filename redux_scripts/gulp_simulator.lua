@@ -80,11 +80,73 @@ local BARREL = "barrel"
 local BOMB = "bomb"
 local ROCKET = "rocket"
 
-local BIRDS = {
-    { moby = 0x80116a50, data = 0x80120e44, id = 0, color = 0xFF0000FF, forceDrop = 15, forceWeapon = BARREL },
-    { moby = 0x801169f8, data = 0x80120c64, id = 1, color = 0xFF00FF00, forceDrop = 6, forceWeapon = BOMB },
-    { moby = 0x80116b00, data = 0x80120e88, id = 2, color = 0xFFFF0000, forceDrop = 16, forceWeapon = ROCKET },
+local BIRD_DEFS = {
+    { moby = 0x80116a50, data = 0x80120e44, id = 0, color = 0xFF0000FF },
+    { moby = 0x801169f8, data = 0x80120c64, id = 1, color = 0xFF00FF00 },
+    { moby = 0x80116b00, data = 0x80120e88, id = 2, color = 0xFFFF0000 },
 }
+
+local CYCLE_BIRD_PRESETS = {
+    {
+        { forceDrop = 7, forceWeapon = nil },
+        { forceDrop = 5, forceWeapon = nil },
+        { forceDrop = nil, forceWeapon = nil },
+    },
+    {
+        { forceDrop = 1, forceWeapon = nil },
+        { forceDrop = 14, forceWeapon = nil },
+        { forceDrop = nil, forceWeapon = nil },
+    },
+    {
+        { forceDrop = 15, forceWeapon = BARREL },
+        { forceDrop = 6, forceWeapon = BOMB },
+        { forceDrop = 16, forceWeapon = ROCKET },
+    },
+    {
+        { forceDrop = 25, forceWeapon = ROCKET },
+        { forceDrop = 10, forceWeapon = ROCKET },
+        { forceDrop = 11, forceWeapon = ROCKET },
+    },
+}
+
+local BIRDS = {}
+for i, def in ipairs(BIRD_DEFS) do
+    BIRDS[i] = {
+        moby = def.moby,
+        data = def.data,
+        id = def.id,
+        color = def.color,
+        forceDrop = nil,
+        forceWeapon = nil,
+    }
+end
+
+local function applyCycleBirdPreset(cycle)
+    local preset = CYCLE_BIRD_PRESETS[clampCycle(cycle)]
+    if not preset then
+        return
+    end
+    for i, bird in ipairs(BIRDS) do
+        local p = preset[i]
+        if p then
+            if p.forceDrop == nil or p.forceDrop <= 0 then
+                bird.forceDrop = nil
+            else
+                bird.forceDrop = clampForceDrop(p.forceDrop)
+            end
+            bird.forceWeapon = p.forceWeapon
+        end
+    end
+    print(string.format("Applied bird force preset for cycle %d", clampCycle(cycle)))
+end
+
+local function clearBirdForces()
+    for _, bird in ipairs(BIRDS) do
+        bird.forceDrop = nil
+        bird.forceWeapon = nil
+    end
+    print("Cleared all bird force drops and weapons")
+end
 
 local BIRDS_BY_DATA = {}
 for _, bird in ipairs(BIRDS) do
@@ -589,7 +651,9 @@ local function drawGulpMapFrame()
     imgui.SetNextWindowSize(480, 520, imgui.constant.Cond.FirstUseEver)
     imgui.safe.Begin('Gulp map', true, function()
         local cw, ch = imgui.GetContentRegionAvail()
-        local optionsH = imgui.GetFrameHeightWithSpacing() * (5 + #BIRDS)
+        local uiSeparators = 4
+        local optionsH = imgui.GetFrameHeightWithSpacing() * (6 + #BIRDS)
+            + imgui.GetFrameHeightWithSpacing() * 0.5 * uiSeparators
         local mapH = ch - optionsH - 4
         if cw < 32 or mapH < 32 then
             return
@@ -633,6 +697,20 @@ local function drawGulpMapFrame()
             switchActiveCycle(S.activeCycle)
         end
         imgui.SameLine()
+        if imgui.Button('Load cycle preset') then
+            applyCycleBirdPreset(S.activeCycle)
+        end
+        imgui.SameLine()
+        if imgui.Button('Clear forces') then
+            clearBirdForces()
+        end
+        if not MAP.runSimulations then
+            imgui.EndDisabled()
+        end
+        imgui.Separator()
+        if not MAP.runSimulations then
+            imgui.BeginDisabled(true)
+        end
         local prevAutoRestart = MAP.autoRestartPlayback
         local autoRestartChanged
         autoRestartChanged, MAP.autoRestartPlayback = imgui.Checkbox('Auto-restart', MAP.autoRestartPlayback)
@@ -656,6 +734,7 @@ local function drawGulpMapFrame()
         if healthChanged then
             setHealthPatch(MAP.infiniteHealth)
         end
+        imgui.Separator()
         for i, bird in ipairs(BIRDS) do
             if i > 1 then
                 imgui.SameLine()
@@ -672,6 +751,7 @@ local function drawGulpMapFrame()
                 bird.forceDrop = clampForceDrop(forceUi)
             end
         end
+        imgui.Separator()
         for i, bird in ipairs(BIRDS) do
             if i > 1 then
                 imgui.SameLine()
@@ -692,6 +772,7 @@ local function drawGulpMapFrame()
                 bird.forceWeapon = weaponForceComboIndexToKey(weaponIndex)
             end
         end
+        imgui.Separator()
         local gulpX, gulpY, gulpZ = readMobyXYZ(GULP_ADDR)
         imgui.TextUnformatted(string.format('spyro: x=%d y=%d z=%d', spyroX, spyroY, spyroZ))
         imgui.TextUnformatted(string.format('gulp: x=%d y=%d z=%d', gulpX, gulpY, gulpZ))
@@ -952,6 +1033,8 @@ switchActiveCycle = function(newCycle)
 end
 
 S.switchActiveCycle = switchActiveCycle
+S.applyCycleBirdPreset = applyCycleBirdPreset
+S.clearBirdForces = clearBirdForces
 
 unregisterForceBreakpoints = function()
     if S.forceDropBreakpoint then
@@ -1135,6 +1218,7 @@ local function main()
     S.loadedMoviePath = nil
     S.wasPlaying = false
     S.loopActive = true
+    applyCycleBirdPreset(S.activeCycle)
     registerMapUi()
     registerListeners()
     registerForceBreakpoints()
