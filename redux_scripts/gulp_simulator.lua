@@ -227,6 +227,7 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
     loadedMoviePath = nil,
     bird_count = 0,
     egg_count = 0,
+    egg_hatch_count = 0,
     bird_dropped = { [0] = false, [1] = false, [2] = false },
     gameFrame = 0,
     forceDropBreakpoint = nil,
@@ -254,6 +255,7 @@ MAP.useMoveMovies = USE_MOVE_MOVIES
 S.activeCycle = clampCycle(S.activeCycle or 1)
 
 S.egg_count = S.egg_count or 0
+S.egg_hatch_count = S.egg_hatch_count or 0
 if not S.bird_dropped then
     S.bird_dropped = { [0] = false, [1] = false, [2] = false }
 end
@@ -847,6 +849,7 @@ end
 local function resetRunState()
     S.bird_count = 0
     S.egg_count = 0
+    S.egg_hatch_count = 0
     S.fixedMapBounds = nil
     S.claimedDropTargets = {}
     S.birdDropTarget = {}
@@ -1151,6 +1154,7 @@ local function tryCompleteCycle()
     if not MAP.runSimulations then
         return
     end
+    --[[
     if not next(S.cycle_spawned) then
         return
     end
@@ -1169,6 +1173,19 @@ local function tryCompleteCycle()
         frame
     ))
     restartPlayback("All spawned vultures despawned - reloading")
+    --]]
+    if S.egg_count <= 0 or S.egg_hatch_count < S.egg_count then
+        return
+    end
+    local frame = getGameFrame()
+    print(string.format(
+        "cycle complete: fight cycle %d eggs_dropped=%d eggs_hatched=%d frame=%d",
+        S.activeCycle,
+        S.egg_count,
+        S.egg_hatch_count,
+        frame
+    ))
+    restartPlayback("All dropped eggs hatched - reloading")
 end
 
 local function onEggSpawned()
@@ -1202,6 +1219,8 @@ local function onEggHatched()
     local birdLabel = birdId ~= nil and tostring(birdId) or string.format("unknown(0x%08x)", eggData)
     local frame = getGameFrame()
     print(string.format("egg hatched: bird=%s frame=%d", birdLabel, frame))
+    S.egg_hatch_count = S.egg_hatch_count + 1
+    tryCompleteCycle()
     return true
 end
 
@@ -1232,7 +1251,7 @@ local function onVultureReset()
     end
 
     S.cycle_despawned[bird.id] = true
-    tryCompleteCycle()
+    -- tryCompleteCycle()
     return true
 end
 
