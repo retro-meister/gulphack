@@ -185,6 +185,7 @@ local DROP_WEAPON_FORCE_BP = 0x800779c4
 local DROP_LOCATION_BP = 0x80077448
 local VULTURE_RESET_BP = 0x8007742c
 local EGG_SPAWN_BP = 0x80077a48
+local EGG_HATCH_BP = 0x800781e0
 
 local DROP_IDS = {
     [0x196] = "BARREL",
@@ -236,6 +237,7 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
     claimedDropTargets = {},
     birdDropTarget = {},
     eggedDropTargets = {},
+    eggDataToBird = {},
     simulation_count = 0,
     cycle_spawned = {},
     cycle_egg = {},
@@ -260,6 +262,9 @@ if not S.birdDropTarget then
 end
 if not S.eggedDropTargets then
     S.eggedDropTargets = {}
+end
+if not S.eggDataToBird then
+    S.eggDataToBird = {}
 end
 if not S.cycle_spawned then
     S.cycle_spawned = {}
@@ -846,6 +851,7 @@ local function resetRunState()
     S.claimedDropTargets = {}
     S.birdDropTarget = {}
     S.eggedDropTargets = {}
+    S.eggDataToBird = {}
     S.bird_dropped = { [0] = false, [1] = false, [2] = false }
     S.cycle_spawned = {}
     S.cycle_egg = {}
@@ -1179,12 +1185,23 @@ local function onEggSpawned()
         S.cycle_egg[bird.id] = true
     end
     markEggDropTarget(eggData, bird and bird.id)
+    S.eggDataToBird[eggData] = bird and bird.id or nil
     S.egg_count = S.egg_count + 1
     local frame = getGameFrame()
     print(string.format(
         "egg spawn: bird=%s random_delay=%d hatch_timer=%d drop=%s frame=%d",
         birdLabelFromData(birdData), randomDelay, hatchTimer, dropLabel, frame
     ))
+    return true
+end
+
+local function onEggHatched()
+    local regs = PCSX.getRegisters().GPR.n
+    local eggData = regs.s3
+    local birdId = S.eggDataToBird[eggData]
+    local birdLabel = birdId ~= nil and tostring(birdId) or string.format("unknown(0x%08x)", eggData)
+    local frame = getGameFrame()
+    print(string.format("egg hatched: bird=%s frame=%d", birdLabel, frame))
     return true
 end
 
@@ -1242,6 +1259,7 @@ registerSimulationBreakpoints = function()
         PCSX.addBreakpoint(DROP_LOCATION_BP, 'Exec', 4, '', onDropLocationSelected, 'gulp drop location'),
         PCSX.addBreakpoint(VULTURE_RESET_BP, 'Exec', 4, '', onVultureReset, 'gulp vulture reset'),
         PCSX.addBreakpoint(EGG_SPAWN_BP, 'Exec', 4, '', onEggSpawned, 'gulp egg spawn'),
+        PCSX.addBreakpoint(EGG_HATCH_BP, 'Exec', 4, '', onEggHatched, 'gulp egg hatch'),
     }
 end
 
