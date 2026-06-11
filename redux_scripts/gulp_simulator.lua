@@ -1587,13 +1587,9 @@ end
 S.startCsvSweep = startCsvSweep
 S.cancelCsvSweep = cancelCsvSweep
 
-local function allActiveBirdsDroppedAndHatched(cycle)
-    local rr = S.runRecord
-    if not rr then
-        return false
-    end
+local function allActiveBirdsDropped(cycle)
     for birdId = 0, getActiveBirdCount(cycle) - 1 do
-        if not S.bird_dropped[birdId] or not rr.hatch_frames[birdId] then
+        if not S.bird_dropped[birdId] then
             return false
         end
     end
@@ -1624,7 +1620,7 @@ local function tryCompleteCycle()
     ))
     restartPlayback("All spawned vultures despawned - reloading")
     --]]
-    if not allActiveBirdsDroppedAndHatched(S.activeCycle) then
+    if not allActiveBirdsDropped(S.activeCycle) then
         return
     end
     local frame = getGameFrame()
@@ -1651,14 +1647,13 @@ local function tryCompleteCycle()
         return
     end
     logSim(string.format(
-        "cycle complete: fight cycle %d active_birds=%d eggs_dropped=%d eggs_hatched=%d frame=%d",
+        "cycle complete: fight cycle %d active_birds=%d eggs_dropped=%d frame=%d",
         S.activeCycle,
         getActiveBirdCount(S.activeCycle),
         S.egg_count,
-        S.egg_hatch_count,
         frame
     ))
-    restartPlayback("All active birds dropped and hatched - reloading")
+    restartPlayback("All active birds dropped - reloading")
 end
 
 local function onEggSpawned()
@@ -1689,6 +1684,7 @@ local function onEggSpawned()
         "egg spawn: bird=%s random_delay=%d hatch_timer=%d drop=%s frame=%d",
         birdLabelFromData(birdData), randomDelay, hatchTimer, dropLabel, frame
     ))
+    tryCompleteCycle()
     return true
 end
 
@@ -1703,7 +1699,6 @@ local function onEggHatched()
         S.runRecord.hatch_frames[birdId] = frame
     end
     S.egg_hatch_count = S.egg_hatch_count + 1
-    tryCompleteCycle()
     return true
 end
 
