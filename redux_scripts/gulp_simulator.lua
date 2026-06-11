@@ -77,8 +77,7 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
     bird_count = 0,
     egg_count = 0,
     bird_dropped = { [0] = false, [1] = false, [2] = false },
-    dropLocationBp = nil,
-    eggBp = nil,
+    breakpoints = {},
     fixedMapBounds = nil,
     claimedDropTargets = {},
     birdDropTarget = {},
@@ -542,14 +541,10 @@ end
 
 local function teardown()
     restoreRenderPatch()
-    if S.dropLocationBp then
-        S.dropLocationBp:remove()
-        S.dropLocationBp = nil
+    for _, bp in ipairs(S.breakpoints) do
+        bp:remove()
     end
-    if S.eggBp then
-        S.eggBp:remove()
-        S.eggBp = nil
-    end
+    S.breakpoints = {}
     for _, listener in ipairs(S.listeners) do
         listener:remove()
     end
@@ -619,10 +614,6 @@ local function onDropLocationSelected()
     return true
 end
 
-local function registerDropLocationBreakpoint()
-    S.dropLocationBp = PCSX.addBreakpoint(DROP_LOCATION_BP, 'Exec', 4, '', onDropLocationSelected, 'gulp drop location')
-end
-
 local restartPlayback, startPlayback
 
 startPlayback = function()
@@ -677,8 +668,11 @@ local function onEggSpawned()
     return true
 end
 
-local function registerEggSpawnBreakpoint()
-    S.eggBp = PCSX.addBreakpoint(EGG_SPAWN_BP, 'Exec', 4, '', onEggSpawned, 'gulp egg spawn')
+local function registerBreakpoints()
+    S.breakpoints = {
+        PCSX.addBreakpoint(DROP_LOCATION_BP, 'Exec', 4, '', onDropLocationSelected, 'gulp drop location'),
+        PCSX.addBreakpoint(EGG_SPAWN_BP, 'Exec', 4, '', onEggSpawned, 'gulp egg spawn'),
+    }
 end
 
 local function registerListeners()
@@ -713,8 +707,7 @@ local function main()
     S.loopActive = true
     registerMapUi()
     registerListeners()
-    registerDropLocationBreakpoint()
-    registerEggSpawnBreakpoint()
+    registerBreakpoints()
     applyRenderPatch()
     print(string.format(
         "RNG movie loop starting: %s (render %s)",
