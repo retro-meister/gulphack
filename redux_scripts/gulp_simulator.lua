@@ -70,6 +70,7 @@ local SPYRO_ADDR = 0x80069ff0
 local SPYRO_COLOR = 0xFFAA00FF
 
 local GULP_ADDR = 0x801169a0
+local GULP_ISOLATE_X = 100000
 local GULP_ISOLATE_Z = 10000
 local GULP_COLOR = 0xFF00FF00
 
@@ -1179,6 +1180,7 @@ local function resetRunState()
 end
 
 local function isolateGulpPosition()
+    writeRam32(GULP_ADDR + MOBY_POS_X, GULP_ISOLATE_X)
     writeRam32(GULP_ADDR + MOBY_POS_Z, GULP_ISOLATE_Z)
 end
 
@@ -1585,6 +1587,19 @@ end
 S.startCsvSweep = startCsvSweep
 S.cancelCsvSweep = cancelCsvSweep
 
+local function allActiveBirdsDroppedAndHatched(cycle)
+    local rr = S.runRecord
+    if not rr then
+        return false
+    end
+    for birdId = 0, getActiveBirdCount(cycle) - 1 do
+        if not S.bird_dropped[birdId] or not rr.hatch_frames[birdId] then
+            return false
+        end
+    end
+    return true
+end
+
 local function tryCompleteCycle()
     if not MAP.runSimulations then
         return
@@ -1609,7 +1624,7 @@ local function tryCompleteCycle()
     ))
     restartPlayback("All spawned vultures despawned - reloading")
     --]]
-    if S.egg_count <= 0 or S.egg_hatch_count < S.egg_count then
+    if not allActiveBirdsDroppedAndHatched(S.activeCycle) then
         return
     end
     local frame = getGameFrame()
@@ -1636,13 +1651,14 @@ local function tryCompleteCycle()
         return
     end
     logSim(string.format(
-        "cycle complete: fight cycle %d eggs_dropped=%d eggs_hatched=%d frame=%d",
+        "cycle complete: fight cycle %d active_birds=%d eggs_dropped=%d eggs_hatched=%d frame=%d",
         S.activeCycle,
+        getActiveBirdCount(S.activeCycle),
         S.egg_count,
         S.egg_hatch_count,
         frame
     ))
-    restartPlayback("All dropped eggs hatched - reloading")
+    restartPlayback("All active birds dropped and hatched - reloading")
 end
 
 local function onEggSpawned()
