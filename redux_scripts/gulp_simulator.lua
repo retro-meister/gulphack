@@ -1,4 +1,25 @@
-local MOVIE = "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv"
+local CYCLE_COUNT = 4
+local MOVIES = {
+    "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv",
+    "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv",
+    "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv",
+    "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv",
+}
+local AUTO_RESTART_PLAYBACK = true
+
+local function movieForCycle(cycle)
+    return MOVIES[cycle]
+end
+
+local function clampCycle(cycle)
+    if cycle < 1 then
+        return 1
+    end
+    if cycle > CYCLE_COUNT then
+        return CYCLE_COUNT
+    end
+    return cycle
+end
 local RNG_ADDR = 0x8006d144
 local RENDER_PATCH_SITES = {
     { addr = 0x80011afc, vanilla = 0x0c0055bf, patch = 0x00000000 },
@@ -38,9 +59,9 @@ local EGG_DATA_DROP_ID = 0x0c
 local EGG_OUTLINE_COLOR = 0xFF4488FF
 
 local BIRDS = {
-    { moby = 0x80116a50, data = 0x80120e44, id = 0, color = 0xFF0000FF, forceDrop = 7 },
-    { moby = 0x801169f8, data = 0x80120c64, id = 1, color = 0xFF00FF00, forceDrop = 5 },
-    { moby = 0x80116b00, data = 0x80120e88, id = 2, color = 0xFFFF0000 },
+    { moby = 0x80116a50, data = 0x80120e44, id = 0, color = 0xFF0000FF, forceDrop = nil },
+    { moby = 0x801169f8, data = 0x80120c64, id = 1, color = 0xFF00FF00, forceDrop = nil },
+    { moby = 0x80116b00, data = 0x80120e88, id = 2, color = 0xFFFF0000, forceDrop = nil },
 }
 
 local BIRDS_BY_DATA = {}
@@ -62,6 +83,7 @@ local MAP = {
 local VULTURE_MAP_MIN_Z = 20000
 local DROP_TARGET_ROLL_BP = 0x80077498
 local DROP_LOCATION_BP = 0x80077448
+local VULTURE_RESET_BP = 0x8007742c
 local EGG_SPAWN_BP = 0x80077a48
 
 local DROP_IDS = {
@@ -74,7 +96,8 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
     listeners = {},
     loopActive = false,
     patchRngOnLoad = false,
-    movieReady = false,
+    activeCycle = 1,
+    loadedMoviePath = nil,
     bird_count = 0,
     egg_count = 0,
     bird_dropped = { [0] = false, [1] = false, [2] = false },
@@ -84,9 +107,17 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
     birdDropTarget = {},
     eggedDropTargets = {},
     simulation_count = 0,
+    cycle_spawned = {},
+    cycle_egg = {},
+    cycle_despawned = {},
+    despawn_count = 0,
+    bird_despawn_count = {},
 }
 
 local S = _G.GulpRngLoop
+
+S.autoRestartPlayback = AUTO_RESTART_PLAYBACK
+S.activeCycle = clampCycle(S.activeCycle or 1)
 
 S.egg_count = S.egg_count or 0
 if not S.bird_dropped then
@@ -98,6 +129,19 @@ end
 if not S.eggedDropTargets then
     S.eggedDropTargets = {}
 end
+if not S.cycle_spawned then
+    S.cycle_spawned = {}
+end
+if not S.cycle_egg then
+    S.cycle_egg = {}
+end
+if not S.cycle_despawned then
+    S.cycle_despawned = {}
+end
+if not S.bird_despawn_count then
+    S.bird_despawn_count = {}
+end
+S.despawn_count = S.despawn_count or 0
 S.simulation_count = S.simulation_count or S.reset_count or 0
 
 local bit = require('bit')
@@ -469,6 +513,8 @@ local function drawMapMarkers(birds, ctx)
     end
 end
 
+local switchActiveCycle
+
 local function drawGulpMapFrame()
     if not S.loopActive then
         return
@@ -494,6 +540,14 @@ local function drawGulpMapFrame()
         drawMapMoby(mapCtx, GULP_ADDR, GULP_COLOR, 18, nil)
         drawMapMoby(mapCtx, SPYRO_ADDR, SPYRO_COLOR, 16, nil, 0x0e, 0x00, 0x04)
         drawMapCamera(mapCtx)
+        local prevCycle = S.activeCycle
+        local cycleChanged
+        cycleChanged, S.activeCycle = imgui.InputInt('Cycle', S.activeCycle, 1, 1)
+        S.activeCycle = clampCycle(S.activeCycle)
+        if cycleChanged and S.activeCycle ~= prevCycle then
+            switchActiveCycle(S.activeCycle)
+        end
+        imgui.SameLine()
         local renderChanged
         _, MAP.rotateWithCamera = imgui.Checkbox('Rotate with camera', MAP.rotateWithCamera)
         imgui.SameLine()
@@ -538,6 +592,11 @@ local function resetRunState()
     S.birdDropTarget = {}
     S.eggedDropTargets = {}
     S.bird_dropped = { [0] = false, [1] = false, [2] = false }
+    S.cycle_spawned = {}
+    S.cycle_egg = {}
+    S.cycle_despawned = {}
+    S.despawn_count = 0
+    S.bird_despawn_count = {}
 end
 
 local function teardown()
@@ -573,6 +632,15 @@ S.Map = MAP
 local function birdLabelFromData(dataAddr)
     local bird = BIRDS_BY_DATA[dataAddr]
     return bird and tostring(bird.id) or string.format("unknown(0x%08x)", dataAddr)
+end
+
+local function cycleIds(set)
+    local ids = {}
+    for id, _ in pairs(set) do
+        ids[#ids + 1] = tostring(id)
+    end
+    table.sort(ids)
+    return table.concat(ids, ",")
 end
 
 local function markEggDropTarget(eggData, birdId)
@@ -640,9 +708,12 @@ local function onDropLocationSelected()
     local birdData = regs.s2
     local spawnLoc = regs.s0
     local bird = BIRDS_BY_DATA[birdData]
-    if bird and isDropTargetIndex(spawnLoc) then
-        S.claimedDropTargets[spawnLoc] = bird.color
-        S.birdDropTarget[bird.id] = spawnLoc
+    if bird then
+        S.cycle_spawned[bird.id] = true
+        if isDropTargetIndex(spawnLoc) then
+            S.claimedDropTargets[spawnLoc] = bird.color
+            S.birdDropTarget[bird.id] = spawnLoc
+        end
     end
     S.bird_count = S.bird_count + 1
     local birdLabel = birdLabelFromData(birdData)
@@ -657,30 +728,76 @@ end
 local restartPlayback, startPlayback
 
 startPlayback = function()
-    print(string.format("RNG loop starting (simulation count: %d)", S.simulation_count))
+    local movie = movieForCycle(S.activeCycle)
+    print(string.format(
+        "RNG loop starting: fight cycle %d (simulation count: %d)",
+        S.activeCycle,
+        S.simulation_count
+    ))
     resetRunState()
     S.patchRngOnLoad = true
     local ok
-    if not S.movieReady then
-        ok = PCSX.Movie.play(MOVIE)
-        S.movieReady = ok
+    if S.loadedMoviePath ~= movie then
+        ok = PCSX.Movie.play(movie)
+        if ok then
+            S.loadedMoviePath = movie
+        end
     else
         ok = PCSX.Movie.play()
     end
     if not ok then
-        printError("Movie.play failed: " .. MOVIE)
+        printError(string.format("Movie.play failed: cycle %d %s", S.activeCycle, movie))
         stopLoop()
     else
         S.wasPlaying = true
     end
 end
 
+switchActiveCycle = function(newCycle)
+    S.activeCycle = clampCycle(newCycle)
+    S.wasPlaying = false
+    PCSX.Movie.stop()
+    S.loadedMoviePath = nil
+    S.simulation_count = 0
+    print(string.format("Switched to fight cycle %d: %s", S.activeCycle, movieForCycle(S.activeCycle)))
+    if S.loopActive then
+        startPlayback()
+    end
+end
+
+S.switchActiveCycle = switchActiveCycle
+
 restartPlayback = function(reason)
     S.wasPlaying = false
     PCSX.Movie.stop()
     print(reason)
+    if not S.autoRestartPlayback then
+        print("auto-restart disabled, playback stopped")
+        return
+    end
     S.simulation_count = S.simulation_count + 1
     PCSX.nextTick(startPlayback)
+end
+
+local function tryCompleteCycle()
+    if not next(S.cycle_spawned) then
+        return
+    end
+    for id, _ in pairs(S.cycle_spawned) do
+        if not S.cycle_despawned[id] then
+            return
+        end
+    end
+    local frame = PCSX.Movie.getFrame()
+    print(string.format(
+        "cycle complete: fight cycle %d spawned=%s eggs=%s despawns=%s frame=%d",
+        S.activeCycle,
+        cycleIds(S.cycle_spawned),
+        cycleIds(S.cycle_egg),
+        cycleIds(S.cycle_despawned),
+        frame
+    ))
+    restartPlayback("All spawned vultures despawned - reloading")
 end
 
 local function onEggSpawned()
@@ -694,6 +811,7 @@ local function onEggSpawned()
     local bird = BIRDS_BY_DATA[birdData]
     if bird then
         S.bird_dropped[bird.id] = true
+        S.cycle_egg[bird.id] = true
     end
     markEggDropTarget(eggData, bird and bird.id)
     S.egg_count = S.egg_count + 1
@@ -702,9 +820,37 @@ local function onEggSpawned()
         "egg spawn: bird=%s random_delay=%d hatch_timer=%d drop=%s frame=%d",
         birdLabelFromData(birdData), randomDelay, hatchTimer, dropLabel, frame
     ))
-    if S.egg_count == S.bird_count then
-        restartPlayback("All tracked birds spawned eggs - reloading")
+    return true
+end
+
+local function onVultureReset()
+    local regs = PCSX.getRegisters().GPR.n
+    local birdData = regs.s2
+    local bird = BIRDS_BY_DATA[birdData]
+    local frame = PCSX.Movie.getFrame()
+    local birdLabel = birdLabelFromData(birdData)
+
+    if not bird or not S.cycle_spawned[bird.id] or S.cycle_despawned[bird.id] then
+        return true
     end
+
+    local hadEgg = S.cycle_egg[bird.id]
+    local target = S.birdDropTarget[bird.id]
+    if hadEgg then
+        print(string.format("despawn: bird=%s egg=true frame=%d", birdLabel, frame))
+    elseif target then
+        print(string.format("despawn: bird=%s egg=false target=%d frame=%d", birdLabel, target, frame))
+    else
+        print(string.format("despawn: bird=%s egg=false frame=%d", birdLabel, frame))
+    end
+
+    if not hadEgg then
+        S.despawn_count = S.despawn_count + 1
+        S.bird_despawn_count[bird.id] = (S.bird_despawn_count[bird.id] or 0) + 1
+    end
+
+    S.cycle_despawned[bird.id] = true
+    tryCompleteCycle()
     return true
 end
 
@@ -712,6 +858,7 @@ local function registerBreakpoints()
     S.breakpoints = {
         PCSX.addBreakpoint(DROP_TARGET_ROLL_BP, 'Exec', 4, '', onDropTargetRoll, 'gulp drop target roll'),
         PCSX.addBreakpoint(DROP_LOCATION_BP, 'Exec', 4, '', onDropLocationSelected, 'gulp drop location'),
+        PCSX.addBreakpoint(VULTURE_RESET_BP, 'Exec', 4, '', onVultureReset, 'gulp vulture reset'),
         PCSX.addBreakpoint(EGG_SPAWN_BP, 'Exec', 4, '', onEggSpawned, 'gulp egg spawn'),
     }
 end
@@ -744,6 +891,7 @@ end
 local function main()
     teardown()
     PCSX.Movie.stop()
+    S.loadedMoviePath = nil
     S.wasPlaying = false
     S.loopActive = true
     registerMapUi()
@@ -751,9 +899,11 @@ local function main()
     registerBreakpoints()
     applyRenderPatch()
     print(string.format(
-        "RNG movie loop starting: %s (render %s)",
-        MOVIE,
-        MAP.disableRender and "disabled" or "enabled"
+        "RNG movie loop starting: fight cycle %d %s (render %s, auto-restart %s)",
+        S.activeCycle,
+        movieForCycle(S.activeCycle),
+        MAP.disableRender and "disabled" or "enabled",
+        S.autoRestartPlayback and "on" or "off"
     ))
     startPlayback()
 end
