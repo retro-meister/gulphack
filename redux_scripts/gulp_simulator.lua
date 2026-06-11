@@ -1,19 +1,9 @@
 local MOVIE = "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv"
-local DISABLE_RENDER = false
-
 local RNG_ADDR = 0x8006d144
 local RENDER_PATCH_SITES = {
     { addr = 0x80011afc, vanilla = 0x0c0055bf, patch = 0x00000000 },
 }
 
-local MOBY_ARRAY_PTR_ADDR = 0x80066f14
-local GAME_MOBY_ARRAY_ADDR = 0x801169a0
-local MOBY_POOL_END_ADDR = 0x800670bc
-local MOBY_STRIDE = 0x58
-local MOBY_DATA_PTR = 0x00
-local MOBY_TYPE = 0x36
-local MOBY_EMPTY_TYPE = 0x407
-local MOBY_MAX_SLOTS = 0x100
 local MOBY_POS_X = 0x0c
 local MOBY_POS_Y = 0x10
 local MOBY_POS_Z = 0x14
@@ -53,31 +43,16 @@ local EGG_DATA_DROP_X = 0x04
 local EGG_DATA_DROP_Y = 0x06
 local EGG_OUTLINE_COLOR = 0xFF4488FF
 
-local MOBY_TYPE_NAMES = {
-    [0x407] = "(empty)",
-    [0x10] = "MOBY_HEART",
-    [0x78] = "MOBY_SPARX",
-    [0x104] = "MOBY_FLAME",
-    [0x146] = "MOBY_SPARK",
-    [0x196] = "MOBY_GULP_BARREL",
-    [0x197] = "MOBY_GULP_BOMB",
-    [0x198] = "MOBY_GULP_ROCKET",
-    [0x199] = "MOBY_GULP_VULTURE",
-    [0x19e] = "MOBY_GULP_EGG",
-    [0x1bf] = "MOBY_CHICKEN",
-}
-local VULTURE_TYPES = {
-    [0x196] = true,
-    [0x197] = true,
-    [0x198] = true,
-    [0x199] = true,
+local BIRDS = {
+    { moby = 0x80116a50, data = 0x80120e44, id = 0, color = 0xFF0000FF },
+    { moby = 0x801169f8, data = 0x80120c64, id = 1, color = 0xFF00FF00 },
+    { moby = 0x80116b00, data = 0x80120e88, id = 2, color = 0xFFFF0000 },
 }
 
-local BIRD_VULTURE_DATA = {
-    { addr = 0x80120e44, id = 0, color = 0xFF0000FF },
-    { addr = 0x80120c64, id = 1, color = 0xFF00FF00 },
-    { addr = 0x80120e88, id = 2, color = 0xFFFF0000 },
-}
+local BIRDS_BY_DATA = {}
+for _, bird in ipairs(BIRDS) do
+    BIRDS_BY_DATA[bird.data] = bird
+end
 
 local MAP = {
     enabled = true,
@@ -86,19 +61,14 @@ local MAP = {
     worldMinY = -2800,
     worldMaxY = 2800,
     autoFit = true,
-    rotateWithCamera = false,
+    rotateWithCamera = true,
+    disableRender = false,
     scale = 1.2,
     sprite = nil,
 }
 local VULTURE_MAP_MIN_Z = 20000
 local DROP_LOCATION_BP = 0x80077448
 local EGG_SPAWN_BP = 0x80077a48
-
-local BIRDS = {
-    [0x80120e44] = 0,
-    [0x80120c64] = 1,
-    [0x80120e88] = 2,
-}
 
 local DROP_IDS = {
     [0x196] = "BARREL",
@@ -116,7 +86,6 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
     bird_dropped = { [0] = false, [1] = false, [2] = false },
     dropLocationBp = nil,
     eggBp = nil,
-    mobyByVultureData = {},
     fixedMapBounds = nil,
     claimedDropTargets = {},
     birdDropTarget = {},
@@ -197,167 +166,25 @@ local function isKusegPtr(addr)
     return bit.rshift(addr, 24) == 0x80
 end
 
-local function mobyTypeTag(typeId)
-    return MOBY_TYPE_NAMES[typeId] or ""
-end
-
-local function getMobyArrayBase()
-    local ptrGlobal = readRam32(MOBY_ARRAY_PTR_ADDR)
-    if isKusegPtr(ptrGlobal) then
-        local base = readRam32(ptrGlobal)
-        if isKusegPtr(base) then
-            return base, string.format("mobyArrayPtr -> 0x%08x", ptrGlobal)
-        end
-    end
-    local base = readRam32(GAME_MOBY_ARRAY_ADDR)
-    if isKusegPtr(base) then
-        return base, "GAME_moby_array@0x801169a0"
-    end
-    return nil, "unresolved"
-end
-
-local function mobyPoolEnd(base)
-    local endAddr = readRam32(MOBY_POOL_END_ADDR)
-    if not isKusegPtr(endAddr) or endAddr <= base then
-        endAddr = base + MOBY_STRIDE * 0x100
-    end
-    return endAddr
-end
-
-local function collectMobyArrayRows()
-    local base, source = getMobyArrayBase()
-    if not isKusegPtr(base) then
-        return source, 0, {}
-    end
-    local endAddr = mobyPoolEnd(base)
-    local slotCount = math.floor((endAddr - base) / MOBY_STRIDE)
-    if slotCount < 1 then
-        slotCount = MOBY_MAX_SLOTS
-    end
-    if slotCount > MOBY_MAX_SLOTS then
-        slotCount = MOBY_MAX_SLOTS
-    end
-    local rows = {}
-    for i = 0, slotCount - 1 do
-        local addr = base + i * MOBY_STRIDE
-        local typeId = readRam16(addr + MOBY_TYPE)
-        rows[#rows + 1] = {
-            index = i,
-            addr = addr,
-            typeId = typeId,
-            tag = mobyTypeTag(typeId),
-        }
-    end
-    return source, base, rows
-end
-
-local function getMobyArrayBases()
-    local bases, seen = {}, {}
-    local function addBase(base)
-        if isKusegPtr(base) and not seen[base] then
-            seen[base] = true
-            bases[#bases + 1] = base
-        end
-    end
-    local base = select(1, getMobyArrayBase())
-    addBase(base)
-    return bases
-end
-
-local function forEachMobySlot(fn)
-    for _, base in ipairs(getMobyArrayBases()) do
-        local addr = base
-        local endAddr = mobyPoolEnd(base)
-        while addr < endAddr do
-            if fn(addr) then
-                return addr
-            end
-            addr = addr + MOBY_STRIDE
-        end
-    end
-    return nil
-end
-
-local function cacheVultureMoby(vultureData, moby)
-    if not isKusegPtr(vultureData) or not isKusegPtr(moby) then
-        return
-    end
-    if readRam32(moby + MOBY_DATA_PTR) == vultureData then
-        S.mobyByVultureData[vultureData] = moby
-    end
-end
-
-local function findMobyForVultureData(vultureDataAddr)
-    if not isKusegPtr(vultureDataAddr) then
-        return nil
-    end
-    local cached = S.mobyByVultureData[vultureDataAddr]
-    if cached and isKusegPtr(cached) and readRam32(cached + MOBY_DATA_PTR) == vultureDataAddr then
-        return cached
-    end
-    return forEachMobySlot(function(addr)
-        if readRam32(addr + MOBY_DATA_PTR) == vultureDataAddr then
-            S.mobyByVultureData[vultureDataAddr] = addr
-            return true
-        end
-    end)
-end
-
-local function birdStyleForData(vultureData)
-    for _, entry in ipairs(BIRD_VULTURE_DATA) do
-        if entry.addr == vultureData then
-            return entry.id, entry.color
-        end
-    end
-    local birdId = BIRDS[vultureData]
-    if birdId ~= nil then
-        for _, entry in ipairs(BIRD_VULTURE_DATA) do
-            if entry.id == birdId then
-                return entry.id, entry.color
-            end
-        end
-    end
-    return nil, 0xFFFFFFFF
-end
-
 local function collectBirdPositions()
-    local birds, seenMoby = {}, {}
-
-    local function addBird(moby, vultureData)
-        if not isKusegPtr(moby) or seenMoby[moby] then
-            return
-        end
-        seenMoby[moby] = true
-        local id, color = birdStyleForData(vultureData)
+    local birds = {}
+    for _, bird in ipairs(BIRDS) do
+        local moby = bird.moby
         birds[#birds + 1] = {
-            id = id ~= nil and id or #birds,
-            color = color,
+            id = bird.id,
+            color = bird.color,
             x = readRam32s(moby + MOBY_POS_X),
             y = readRam32s(moby + MOBY_POS_Y),
             z = readRam32s(moby + MOBY_POS_Z),
             yaw = readRam8(moby + MOBY_YAW),
         }
     end
-
-    for _, entry in ipairs(BIRD_VULTURE_DATA) do
-        local moby = S.mobyByVultureData[entry.addr] or findMobyForVultureData(entry.addr)
-        if moby then
-            addBird(moby, entry.addr)
-        end
-    end
-
-    forEachMobySlot(function(addr)
-        if VULTURE_TYPES[readRam16(addr + MOBY_TYPE)] then
-            addBird(addr, readRam32(addr + MOBY_DATA_PTR))
-        end
-    end)
-
     return birds
 end
 
 local function getDropTargetPathTable()
-    for _, entry in ipairs(BIRD_VULTURE_DATA) do
-        local pathTable = readRam32(entry.addr + GULP_VULTURE_PATH_TABLE)
+    for _, bird in ipairs(BIRDS) do
+        local pathTable = readRam32(bird.data + GULP_VULTURE_PATH_TABLE)
         if isKusegPtr(pathTable) then
             return pathTable
         end
@@ -554,23 +381,6 @@ local function drawMapBackground(cx, cy, cw, ch)
     imgui.DrawList_AddRect(cx, cy, cx + cw, cy + ch, 0xFF404040, 0, 0, 1)
 end
 
-local function birdColorFromAddr(birdAddr)
-    for _, entry in ipairs(BIRD_VULTURE_DATA) do
-        if entry.addr == birdAddr then
-            return entry.color
-        end
-    end
-    local birdId = BIRDS[birdAddr]
-    if birdId ~= nil then
-        for _, entry in ipairs(BIRD_VULTURE_DATA) do
-            if entry.id == birdId then
-                return entry.color
-            end
-        end
-    end
-    return nil
-end
-
 local function drawMapDropTarget(target, ctx)
     local sx, sy = mapWorldToScreen(target.x, target.y, ctx)
     local scale = ctx.scale
@@ -681,65 +491,38 @@ local function drawMapMarkers(birds, ctx)
     end
 end
 
-local function drawMobyArrayFrame()
-    imgui.SetNextWindowSize(520, 640, imgui.constant.Cond.FirstUseEver)
-    imgui.safe.Begin('Moby array', true, function()
-        local ptrGlobal = readRam32(MOBY_ARRAY_PTR_ADDR)
-        local gameArrayPtr = readRam32(GAME_MOBY_ARRAY_ADDR)
-        local source, base, rows = collectMobyArrayRows()
-        imgui.TextUnformatted(string.format('mobyArrayPtr@0x80066f14 = 0x%08x', ptrGlobal))
-        if isKusegPtr(ptrGlobal) then
-            imgui.TextUnformatted(string.format('  -> 0x%08x = 0x%08x', ptrGlobal, readRam32(ptrGlobal)))
-        end
-        imgui.TextUnformatted(string.format('GAME_moby_array@0x801169a0 = 0x%08x', gameArrayPtr))
-        if not isKusegPtr(base) then
-            imgui.TextUnformatted('moby array base unresolved')
-            return
-        end
-        imgui.TextUnformatted(string.format('source: %s', source))
-        imgui.TextUnformatted(string.format('base: 0x%08x  stride: 0x%x  slots: %d', base, MOBY_STRIDE, #rows))
-        imgui.Separator()
-        imgui.TextUnformatted(string.format('%-5s %-10s %-6s %s', 'idx', 'address', 'type', 'tag'))
-        imgui.BeginChild('moby_array_list', 0, 0, false)
-        for _, row in ipairs(rows) do
-            local tag = row.tag
-            if tag == '' then
-                tag = row.typeId == MOBY_EMPTY_TYPE and '(empty)' or '-'
-            end
-            imgui.TextUnformatted(string.format(
-                '[%3d] 0x%08x  0x%03x  %s',
-                row.index, row.addr, row.typeId, tag
-            ))
-        end
-        imgui.EndChild()
-    end)
-end
-
 local function drawGulpMapFrame()
     if not S.loopActive or not MAP.enabled then
         return
     end
     imgui.SetNextWindowSize(480, 520, imgui.constant.Cond.FirstUseEver)
     imgui.safe.Begin('Gulp map', true, function()
-        _, MAP.rotateWithCamera = imgui.Checkbox('Rotate with camera', MAP.rotateWithCamera)
         local cw, ch = imgui.GetContentRegionAvail()
-        if cw < 32 or ch < 32 then
+        local optionsH = imgui.GetFrameHeightWithSpacing()
+        local mapH = ch - optionsH - 4
+        if cw < 32 or mapH < 32 then
             return
         end
         local cx, cy = imgui.GetCursorScreenPos()
-        imgui.InvisibleButton('gulp_map_canvas', cw, ch)
+        imgui.InvisibleButton('gulp_map_canvas', cw, mapH)
         local birds = collectBirdPositions()
         local dropHome, dropTargets = collectDropTargets()
         local minX, minY, maxX, maxY = getMapBounds(dropHome, dropTargets)
         local spyroX, spyroY, spyroZ = readSpyroPos()
-        local mapCtx = createMapRenderCtx(minX, minY, maxX, maxY, cx, cy, cw, ch, spyroX, spyroY)
-        drawMapBackground(cx, cy, cw, ch)
+        local mapCtx = createMapRenderCtx(minX, minY, maxX, maxY, cx, cy, cw, mapH, spyroX, spyroY)
+        drawMapBackground(cx, cy, cw, mapH)
         drawMapDropTargets(dropHome, dropTargets, mapCtx)
         drawMapMarkers(birds, mapCtx)
         drawMapGulp(mapCtx)
         drawMapSpyro(mapCtx)
         drawMapCamera(mapCtx)
-        imgui.SetCursorScreenPos(cx, cy + ch + 4)
+        local renderChanged
+        _, MAP.rotateWithCamera = imgui.Checkbox('Rotate with camera', MAP.rotateWithCamera)
+        imgui.SameLine()
+        renderChanged, MAP.disableRender = imgui.Checkbox('Disable render', MAP.disableRender)
+        if renderChanged then
+            setRenderPatch(MAP.disableRender)
+        end
         local gulpX, gulpY, gulpZ = readGulpPos()
         imgui.TextUnformatted(string.format('spyro: x=%d y=%d z=%d', spyroX, spyroY, spyroZ))
         imgui.TextUnformatted(string.format('gulp: x=%d y=%d z=%d', gulpX, gulpY, gulpZ))
@@ -753,20 +536,14 @@ local function drawGulpMapFrame()
     end)
 end
 
-local function drawImguiFrame()
-    drawMobyArrayFrame()
-    drawGulpMapFrame()
-end
-
 local function registerMapUi()
-    DrawImguiFrame = drawImguiFrame
+    DrawImguiFrame = drawGulpMapFrame
 end
 
 local function applyRenderPatch()
-    if not DISABLE_RENDER then
-        return
+    if MAP.disableRender then
+        setRenderPatch(true)
     end
-    setRenderPatch(true)
 end
 
 local function restoreRenderPatch()
@@ -793,7 +570,6 @@ local function teardown()
         listener:remove()
     end
     S.listeners = {}
-    S.mobyByVultureData = {}
     S.fixedMapBounds = nil
     S.claimedDropTargets = {}
     S.birdDropTarget = {}
@@ -817,9 +593,9 @@ end
 S.stopLoop = stopLoop
 S.Map = MAP
 
-local function birdLabelFromAddr(birdAddr)
-    local birdId = BIRDS[birdAddr]
-    return birdId ~= nil and tostring(birdId) or string.format("unknown(0x%08x)", birdAddr)
+local function birdLabelFromData(dataAddr)
+    local bird = BIRDS_BY_DATA[dataAddr]
+    return bird and tostring(bird.id) or string.format("unknown(0x%08x)", dataAddr)
 end
 
 local function resetBirdDropped()
@@ -849,19 +625,15 @@ end
 
 local function onDropLocationSelected()
     local regs = PCSX.getRegisters().GPR.n
-    local birdAddr = regs.s2
+    local birdData = regs.s2
     local spawnLoc = regs.s0
-    cacheVultureMoby(birdAddr, regs.s4)
-    local color = birdColorFromAddr(birdAddr)
-    local birdId = BIRDS[birdAddr]
-    if color and spawnLoc >= DROP_TARGET_FIRST and spawnLoc <= DROP_TARGET_LAST then
-        S.claimedDropTargets[spawnLoc] = color
-    end
-    if birdId ~= nil and spawnLoc >= DROP_TARGET_FIRST and spawnLoc <= DROP_TARGET_LAST then
-        S.birdDropTarget[birdId] = spawnLoc
+    local bird = BIRDS_BY_DATA[birdData]
+    if bird and spawnLoc >= DROP_TARGET_FIRST and spawnLoc <= DROP_TARGET_LAST then
+        S.claimedDropTargets[spawnLoc] = bird.color
+        S.birdDropTarget[bird.id] = spawnLoc
     end
     S.bird_count = S.bird_count + 1
-    local birdLabel = birdLabelFromAddr(birdAddr)
+    local birdLabel = birdLabelFromData(birdData)
     local frame = PCSX.Movie.getFrame()
     print(string.format(
         "drop target: bird=%s location=%d frame=%d",
@@ -880,7 +652,6 @@ startPlayback = function()
     print(string.format("RNG loop starting (simulation count: %d)", S.simulation_count))
     S.bird_count = 0
     S.egg_count = 0
-    S.mobyByVultureData = {}
     S.fixedMapBounds = nil
     S.claimedDropTargets = {}
     S.birdDropTarget = {}
@@ -912,23 +683,22 @@ end
 
 local function onEggSpawned()
     local regs = PCSX.getRegisters().GPR.n
-    local birdAddr = regs.s2
-    cacheVultureMoby(birdAddr, regs.s4)
+    local birdData = regs.s2
     local randomDelay = regs.v0
     local eggData = regs.s1
     local hatchTimer = readRam16(eggData + 0xa)
     local dropId = readRam16(eggData + 0xc)
     local dropLabel = DROP_IDS[dropId] or string.format("0x%03x", dropId)
-    local birdId = BIRDS[birdAddr]
-    if birdId ~= nil then
-        S.bird_dropped[birdId] = true
+    local bird = BIRDS_BY_DATA[birdData]
+    if bird then
+        S.bird_dropped[bird.id] = true
     end
-    markEggDropTarget(eggData, birdId)
+    markEggDropTarget(eggData, bird and bird.id)
     S.egg_count = S.egg_count + 1
     local frame = PCSX.Movie.getFrame()
     print(string.format(
         "egg spawn: bird=%s random_delay=%d hatch_timer=%d drop=%s frame=%d",
-        birdLabelFromAddr(birdAddr), randomDelay, hatchTimer, dropLabel, frame
+        birdLabelFromData(birdData), randomDelay, hatchTimer, dropLabel, frame
     ))
     if S.egg_count == S.bird_count then
         restartPlayback("All tracked birds spawned eggs - reloading")
@@ -978,7 +748,7 @@ local function main()
     print(string.format(
         "RNG movie loop starting: %s (render %s)",
         MOVIE,
-        DISABLE_RENDER and "draw skipped, vsync kept" or "enabled"
+        MAP.disableRender and "disabled" or "enabled"
     ))
     startPlayback()
 end
