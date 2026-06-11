@@ -219,6 +219,168 @@ local function weaponForceComboIndexToKey(comboIndex)
     return key
 end
 
+local CSV_PATH = "/Users/retro/repos/pcsx-redux/gulp_sweep.csv"
+local CSV_HEADER = table.concat({
+    "sim_index", "cycle", "perm_index", "rng_seed",
+    "bird0_drop", "bird1_drop", "bird2_drop",
+    "bird0_weapon", "bird1_weapon", "bird2_weapon",
+    "bird0_egg_spawn_frame", "bird1_egg_spawn_frame", "bird2_egg_spawn_frame",
+    "bird0_hatch_timer", "bird1_hatch_timer", "bird2_hatch_timer",
+    "bird0_hatch_frame", "bird1_hatch_frame", "bird2_hatch_frame",
+    "eggs_dropped", "eggs_hatched", "cycle_complete_frame",
+}, ",")
+
+local MOBY_TO_WEAPON = {
+    [0x196] = "barrel",
+    [0x197] = "bomb",
+    [0x198] = "rocket",
+    [0x1bf] = "chicken",
+}
+
+local PERM_CACHE = {}
+
+local function getActiveBirdCount(cycle)
+    return cycle <= 2 and 2 or 3
+end
+
+local function buildPermutationTable(count)
+    local result = {}
+    local positions = {}
+    for i = DROP_TARGET_FIRST, DROP_TARGET_LAST do
+        positions[#positions + 1] = i
+    end
+    local function rec(prefix, available)
+        if #prefix == count then
+            local tuple = {}
+            for j = 1, count do
+                tuple[j] = prefix[j]
+            end
+            result[#result + 1] = tuple
+            return
+        end
+        for i, pos in ipairs(available) do
+            local nextAvail = {}
+            for j, v in ipairs(available) do
+                if j ~= i then
+                    nextAvail[#nextAvail + 1] = v
+                end
+            end
+            prefix[#prefix + 1] = pos
+            rec(prefix, nextAvail)
+            prefix[#prefix] = nil
+        end
+    end
+    rec({}, positions)
+    return result
+end
+
+local function getPermTable(cycle)
+    local k = getActiveBirdCount(cycle)
+    if not PERM_CACHE[k] then
+        PERM_CACHE[k] = buildPermutationTable(k)
+    end
+    return PERM_CACHE[k]
+end
+
+local function permCountForCycle(cycle)
+    return #getPermTable(cycle)
+end
+
+local function csvField(value)
+    if value == nil or value == "" then
+        return ""
+    end
+    local s = tostring(value)
+    if s:find('[,"\n]') then
+        return '"' .. s:gsub('"', '""') .. '"'
+    end
+    return s
+end
+
+local function ensureCsvHeader()
+    local f = io.open(CSV_PATH, "r")
+    if f then
+        local first = f:read("*l")
+        f:close()
+        if first and first ~= "" then
+            return true
+        end
+    end
+    f = io.open(CSV_PATH, "w")
+    if not f then
+        return false, string.format("failed to create CSV: %s", CSV_PATH)
+    end
+    f:write(CSV_HEADER, "\n")
+    f:close()
+    return true
+end
+
+local function scanCsvResume(cycle)
+    local maxSimIndex = -1
+    local maxPermIndex = -1
+    local f = io.open(CSV_PATH, "r")
+    if not f then
+        return maxPermIndex, maxSimIndex
+    end
+    local header = f:read("*l")
+    if not header then
+        f:close()
+        return maxPermIndex, maxSimIndex
+    end
+    for line in f:lines() do
+        local simIndex, lineCycle, permIndex = line:match("^(%d+),(%d+),(%d+),")
+        simIndex = tonumber(simIndex)
+        lineCycle = tonumber(lineCycle)
+        permIndex = tonumber(permIndex)
+        if simIndex and simIndex > maxSimIndex then
+            maxSimIndex = simIndex
+        end
+        if lineCycle == cycle and permIndex and permIndex > maxPermIndex then
+            maxPermIndex = permIndex
+        end
+    end
+    f:close()
+    return maxPermIndex, maxSimIndex
+end
+
+local function appendCsvLine(fields)
+    local f = io.open(CSV_PATH, "a")
+    if not f then
+        return false, string.format("failed to append CSV: %s", CSV_PATH)
+    end
+    local parts = {}
+    for i = 1, #fields do
+        parts[i] = csvField(fields[i])
+    end
+    f:write(table.concat(parts, ","), "\n")
+    f:close()
+    return true
+end
+
+local function mobyIdToWeapon(mobyId)
+    return MOBY_TO_WEAPON[mobyId] or string.format("0x%03x", mobyId)
+end
+
+local function birdRecordField(record, birdId)
+    local value = record[birdId]
+    if value == nil then
+        return ""
+    end
+    return value
+end
+
+local function newRunRecord()
+    return {
+        drops = {},
+        drop_frames = {},
+        weapons = {},
+        egg_spawn_frames = {},
+        hatch_timers = {},
+        hatch_frames = {},
+        cycle_complete_frame = nil,
+    }
+end
+
 _G.GulpRngLoop = _G.GulpRngLoop or {
     listeners = {},
     loopActive = false,
@@ -245,6 +407,16 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
     cycle_despawned = {},
     despawn_count = 0,
     bird_despawn_count = {},
+    sweepActive = false,
+    perm_index = 0,
+    perm_count = 0,
+    sim_index = 0,
+    lastRngSeed = 0,
+    runRecord = nil,
+    sweepStatusText = "",
+    mapWindowOpen = true,
+    sweepRecording = false,
+    sweepPrevRunSimulations = false,
 }
 
 local S = _G.GulpRngLoop
@@ -283,9 +455,99 @@ end
 S.despawn_count = S.despawn_count or 0
 S.simulation_count = S.simulation_count or S.reset_count or 0
 S.gameFrame = S.gameFrame or 0
+S.sweepActive = S.sweepActive or false
+S.perm_index = S.perm_index or 0
+S.perm_count = S.perm_count or 0
+S.sim_index = S.sim_index or 0
+S.lastRngSeed = S.lastRngSeed or 0
+S.sweepStatusText = S.sweepStatusText or ""
+if S.mapWindowOpen == nil then
+    S.mapWindowOpen = true
+end
+S.sweepRecording = S.sweepRecording or false
+S.sweepPrevRunSimulations = S.sweepPrevRunSimulations or false
+if not S.runRecord then
+    S.runRecord = newRunRecord()
+end
+
+local function updateSweepStatus()
+    if not S.sweepActive then
+        return
+    end
+    S.sweepStatusText = string.format(
+        "Sweeping cycle %d: %d / %d",
+        S.activeCycle,
+        S.perm_index + 1,
+        S.perm_count
+    )
+end
 
 local function getGameFrame()
     return S.gameFrame
+end
+
+local function logSim(msg)
+    if not S.sweepActive then
+        print(msg)
+    end
+end
+
+local function applyPermutation(cycle, permIndex)
+    applyCycleBirdPreset(cycle)
+    local perm = getPermTable(cycle)[permIndex + 1]
+    if not perm then
+        return false
+    end
+    local activeCount = getActiveBirdCount(cycle)
+    for i, bird in ipairs(BIRDS) do
+        if i <= activeCount then
+            bird.forceDrop = perm[i]
+        else
+            bird.forceDrop = nil
+        end
+    end
+    return true
+end
+
+local function flushCsvRow()
+    local ok, err = ensureCsvHeader()
+    if not ok then
+        print(err)
+        return false
+    end
+    local perm = getPermTable(S.activeCycle)[S.perm_index + 1]
+    local rr = S.runRecord or newRunRecord()
+    S.sim_index = S.sim_index + 1
+    local fields = {
+        S.sim_index,
+        S.activeCycle,
+        S.perm_index,
+        string.format("0x%08x", S.lastRngSeed or 0),
+        perm and perm[1] or birdRecordField(rr.drops, 0),
+        perm and perm[2] or birdRecordField(rr.drops, 1),
+        perm and perm[3] or birdRecordField(rr.drops, 2),
+        birdRecordField(rr.weapons, 0),
+        birdRecordField(rr.weapons, 1),
+        birdRecordField(rr.weapons, 2),
+        birdRecordField(rr.egg_spawn_frames, 0),
+        birdRecordField(rr.egg_spawn_frames, 1),
+        birdRecordField(rr.egg_spawn_frames, 2),
+        birdRecordField(rr.hatch_timers, 0),
+        birdRecordField(rr.hatch_timers, 1),
+        birdRecordField(rr.hatch_timers, 2),
+        birdRecordField(rr.hatch_frames, 0),
+        birdRecordField(rr.hatch_frames, 1),
+        birdRecordField(rr.hatch_frames, 2),
+        S.egg_count,
+        S.egg_hatch_count,
+        rr.cycle_complete_frame or "",
+    }
+    ok, err = appendCsvLine(fields)
+    if not ok then
+        print(err)
+        return false
+    end
+    return true
 end
 
 local bit = require('bit')
@@ -667,6 +929,7 @@ local switchActiveCycle
 local reloadActiveMovie
 local restartPlayback, startPlayback
 local startSimulations, stopSimulations
+local startCsvSweep, finishCsvSweep, cancelCsvSweep
 local registerForceBreakpoints
 local registerSimulationBreakpoints
 local unregisterForceBreakpoints
@@ -677,14 +940,17 @@ local function drawGulpMapFrame()
         return
     end
     imgui.SetNextWindowSize(480, 520, imgui.constant.Cond.FirstUseEver)
-    imgui.safe.Begin('Gulp map', true, function()
+    imgui.safe.Begin('Gulp map', S.mapWindowOpen, function()
         local cw, ch = imgui.GetContentRegionAvail()
-        local uiSeparators = 4
-        local optionsH = imgui.GetFrameHeightWithSpacing() * (6 + #BIRDS)
+        local uiSeparators = 5
+        local optionsH = imgui.GetFrameHeightWithSpacing() * (8 + #BIRDS)
             + imgui.GetFrameHeightWithSpacing() * 0.5 * uiSeparators
         local mapH = ch - optionsH - 4
-        if cw < 32 or mapH < 32 then
+        if cw < 32 then
             return
+        end
+        if mapH < 32 then
+            mapH = 32
         end
         local cx, cy = imgui.GetCursorScreenPos()
         imgui.InvisibleButton('gulp_map_canvas', cw, mapH)
@@ -699,9 +965,16 @@ local function drawGulpMapFrame()
         drawMapMoby(mapCtx, GULP_ADDR, GULP_COLOR, 18, nil)
         drawMapMoby(mapCtx, SPYRO_ADDR, SPYRO_COLOR, 16, nil, 0x0e, 0x00, 0x04)
         drawMapCamera(mapCtx)
+        imgui.SetCursorScreenPos(cx, cy + mapH + 4)
         local simChanged
+        if S.sweepActive then
+            imgui.BeginDisabled(true)
+        end
         simChanged, MAP.runSimulations = imgui.Checkbox('Run simulations', MAP.runSimulations)
-        if simChanged then
+        if S.sweepActive then
+            imgui.EndDisabled()
+        end
+        if simChanged and not S.sweepActive then
             if MAP.runSimulations then
                 startSimulations()
             else
@@ -709,7 +982,7 @@ local function drawGulpMapFrame()
             end
         end
         imgui.SameLine()
-        if not MAP.runSimulations then
+        if S.sweepActive then
             imgui.BeginDisabled(true)
         end
         local prevCycle = S.activeCycle
@@ -721,7 +994,7 @@ local function drawGulpMapFrame()
         local cycleChanged
         cycleChanged, S.activeCycle = imgui.InputInt('##gulp_cycle', S.activeCycle, 1, 1)
         S.activeCycle = clampCycle(S.activeCycle)
-        if cycleChanged and S.activeCycle ~= prevCycle then
+        if cycleChanged and S.activeCycle ~= prevCycle and not S.sweepActive then
             switchActiveCycle(S.activeCycle)
         end
         imgui.SameLine()
@@ -732,26 +1005,55 @@ local function drawGulpMapFrame()
         if imgui.Button('Clear forces') then
             clearBirdForces()
         end
-        imgui.SameLine()
-        local moveMoviesChanged
-        moveMoviesChanged, MAP.useMoveMovies = imgui.Checkbox('Move', MAP.useMoveMovies)
-        if moveMoviesChanged then
-            reloadActiveMovie()
-        end
-        if not MAP.runSimulations then
+        if S.sweepActive then
             imgui.EndDisabled()
         end
+        imgui.SameLine()
+        if S.sweepActive then
+            imgui.BeginDisabled(true)
+        end
+        if imgui.Button('Write CSV') then
+            PCSX.nextTick(startCsvSweep)
+        end
+        if S.sweepActive then
+            imgui.EndDisabled()
+        end
+        imgui.SameLine()
+        if not S.sweepActive then
+            imgui.BeginDisabled(true)
+        end
+        if imgui.Button('Cancel CSV') then
+            PCSX.nextTick(cancelCsvSweep)
+        end
+        if not S.sweepActive then
+            imgui.EndDisabled()
+        end
+        imgui.SameLine()
+        if S.sweepActive then
+            imgui.BeginDisabled(true)
+        end
+        local moveMoviesChanged
+        moveMoviesChanged, MAP.useMoveMovies = imgui.Checkbox('Move', MAP.useMoveMovies)
+        if moveMoviesChanged and not S.sweepActive then
+            reloadActiveMovie()
+        end
+        if S.sweepActive then
+            imgui.EndDisabled()
+        end
+        if S.sweepStatusText ~= "" then
+            imgui.TextUnformatted(S.sweepStatusText)
+        end
         imgui.Separator()
-        if not MAP.runSimulations then
+        if S.sweepActive then
             imgui.BeginDisabled(true)
         end
         local prevAutoRestart = MAP.autoRestartPlayback
         local autoRestartChanged
         autoRestartChanged, MAP.autoRestartPlayback = imgui.Checkbox('Auto-restart', MAP.autoRestartPlayback)
-        if autoRestartChanged and MAP.autoRestartPlayback and not prevAutoRestart and S.loopActive then
+        if autoRestartChanged and MAP.autoRestartPlayback and not prevAutoRestart and S.loopActive and not S.sweepActive then
             restartPlayback("Auto-restart enabled, restarting...")
         end
-        if not MAP.runSimulations then
+        if S.sweepActive then
             imgui.EndDisabled()
         end
         imgui.SameLine()
@@ -769,6 +1071,9 @@ local function drawGulpMapFrame()
             setHealthPatch(MAP.infiniteHealth)
         end
         imgui.Separator()
+        if S.sweepActive then
+            imgui.BeginDisabled(true)
+        end
         for i, bird in ipairs(BIRDS) do
             if i > 1 then
                 imgui.SameLine()
@@ -806,6 +1111,9 @@ local function drawGulpMapFrame()
                 bird.forceWeapon = weaponForceComboIndexToKey(weaponIndex)
             end
         end
+        if S.sweepActive then
+            imgui.EndDisabled()
+        end
         imgui.Separator()
         local gulpX, gulpY, gulpZ = readMobyXYZ(GULP_ADDR)
         imgui.TextUnformatted(string.format('spyro: x=%d y=%d z=%d', spyroX, spyroY, spyroZ))
@@ -842,8 +1150,9 @@ end
 
 local function patchRng()
     local state = randomRngState()
+    S.lastRngSeed = state
     writeRam32(RNG_ADDR, state)
-    print(string.format("RNG @ 0x%08x set to 0x%08x", RNG_ADDR, state))
+    logSim(string.format("RNG @ 0x%08x set to 0x%08x", RNG_ADDR, state))
 end
 
 local function resetRunState()
@@ -862,6 +1171,7 @@ local function resetRunState()
     S.despawn_count = 0
     S.bird_despawn_count = {}
     S.gameFrame = 0
+    S.runRecord = newRunRecord()
 end
 
 local function onUpdateGameFrame()
@@ -883,6 +1193,9 @@ local function teardown()
 end
 
 local function stopLoop(reason)
+    if S.sweepActive then
+        finishCsvSweep("CSV sweep stopped (loop stopped)")
+    end
     S.loopActive = false
     S.wasPlaying = false
     S.patchRngOnLoad = false
@@ -944,7 +1257,7 @@ local function applyForcedDropRoll(regs, bird)
         return naturalRoll, naturalRoll
     end
     if not isDropTargetIndex(forced) then
-        print(string.format("ignored invalid forceDrop %d for bird %d", forced, bird.id))
+        logSim(string.format("ignored invalid forceDrop %d for bird %d", forced, bird.id))
         return naturalRoll, naturalRoll
     end
     regs.v0 = forced
@@ -959,12 +1272,12 @@ local function onDropTargetRoll()
     local birdLabel = birdLabelFromData(birdData)
     local frame = getGameFrame()
     if roll ~= naturalRoll then
-        print(string.format(
+        logSim(string.format(
             "drop roll: bird=%s roll=%d (forced from %d) frame=%d",
             birdLabel, roll, naturalRoll, frame
         ))
     else
-        print(string.format(
+        logSim(string.format(
             "drop roll: bird=%s roll=%d frame=%d",
             birdLabel, roll, frame
         ))
@@ -994,15 +1307,18 @@ local function onWeaponContentsForced()
     local birdLabel = birdLabelFromData(birdData)
     local frame = getGameFrame()
     if mobyId ~= naturalMoby then
-        print(string.format(
+        logSim(string.format(
             "weapon contents: bird=%s moby=0x%03x (forced from 0x%03x) frame=%d",
             birdLabel, mobyId, naturalMoby, frame
         ))
     else
-        print(string.format(
+        logSim(string.format(
             "weapon contents: bird=%s moby=0x%03x frame=%d",
             birdLabel, mobyId, frame
         ))
+    end
+    if bird then
+        S.runRecord.weapons[bird.id] = mobyIdToWeapon(mobyId)
     end
     return true
 end
@@ -1017,12 +1333,14 @@ local function onDropLocationSelected()
         if isDropTargetIndex(spawnLoc) then
             S.claimedDropTargets[spawnLoc] = bird.color
             S.birdDropTarget[bird.id] = spawnLoc
+            S.runRecord.drops[bird.id] = spawnLoc
+            S.runRecord.drop_frames[bird.id] = getGameFrame()
         end
     end
     S.bird_count = S.bird_count + 1
     local birdLabel = birdLabelFromData(birdData)
     local frame = getGameFrame()
-    print(string.format(
+    logSim(string.format(
         "drop target: bird=%s location=%d frame=%d",
         birdLabel, spawnLoc, frame
     ))
@@ -1034,15 +1352,16 @@ startPlayback = function()
         return
     end
     local movie = movieForCycle(S.activeCycle)
-    print(string.format(
+    logSim(string.format(
         "RNG loop starting: fight cycle %d (simulation count: %d)",
         S.activeCycle,
         S.simulation_count
     ))
     resetRunState()
     S.patchRngOnLoad = true
+    PCSX.Movie.stop()
     local ok
-    if S.loadedMoviePath ~= movie then
+    if S.sweepActive or S.loadedMoviePath ~= movie then
         ok = PCSX.Movie.play(movie)
         if ok then
             S.loadedMoviePath = movie
@@ -1054,11 +1373,18 @@ startPlayback = function()
         printError(string.format("Movie.play failed: cycle %d %s", S.activeCycle, movie))
         S.wasPlaying = false
         S.loadedMoviePath = nil
-        unregisterSimulationBreakpoints()
-        MAP.runSimulations = false
-        registerForceBreakpoints()
+        if S.sweepActive then
+            finishCsvSweep(string.format("CSV sweep failed: movie play failed cycle %d", S.activeCycle))
+        else
+            unregisterSimulationBreakpoints()
+            MAP.runSimulations = false
+            registerForceBreakpoints()
+        end
     else
         S.wasPlaying = true
+        if S.sweepActive then
+            S.sweepRecording = true
+        end
     end
 end
 
@@ -1078,6 +1404,9 @@ reloadActiveMovie = function()
 end
 
 switchActiveCycle = function(newCycle)
+    if S.sweepActive then
+        return
+    end
     S.activeCycle = clampCycle(newCycle)
     S.wasPlaying = false
     PCSX.Movie.stop()
@@ -1118,6 +1447,10 @@ unregisterSimulationBreakpoints = function()
 end
 
 stopSimulations = function()
+    if S.sweepActive then
+        finishCsvSweep("CSV sweep stopped")
+        return
+    end
     S.wasPlaying = false
     S.patchRngOnLoad = false
     S.loadedMoviePath = nil
@@ -1139,16 +1472,107 @@ restartPlayback = function(reason)
     if not MAP.runSimulations then
         return
     end
+    if S.sweepActive then
+        S.sweepRecording = false
+    end
     S.wasPlaying = false
     PCSX.Movie.stop()
-    print(reason)
+    logSim(reason)
     if not MAP.autoRestartPlayback then
-        print("auto-restart disabled, playback stopped")
+        if S.sweepActive then
+            finishCsvSweep("CSV sweep stopped (auto-restart disabled)")
+        else
+            logSim("auto-restart disabled, playback stopped")
+        end
         return
     end
     S.simulation_count = S.simulation_count + 1
     PCSX.nextTick(startPlayback)
 end
+
+finishCsvSweep = function(message, options)
+    if not S.sweepActive then
+        return
+    end
+    options = options or {}
+    S.sweepActive = false
+    S.sweepRecording = false
+    S.wasPlaying = false
+    S.patchRngOnLoad = false
+    S.loadedMoviePath = nil
+    PCSX.Movie.stop()
+    unregisterSimulationBreakpoints()
+    resetRunState()
+    registerForceBreakpoints()
+    if options.restoreRunSimulations and S.sweepPrevRunSimulations then
+        MAP.runSimulations = true
+        registerSimulationBreakpoints()
+    else
+        MAP.runSimulations = false
+    end
+    S.sweepStatusText = message
+    print(message)
+end
+
+startCsvSweep = function()
+    if S.sweepActive then
+        return
+    end
+    local cycle = S.activeCycle
+    local permCount = permCountForCycle(cycle)
+    local maxPermIndex, maxSimIndex = scanCsvResume(cycle)
+    local startIndex = maxPermIndex + 1
+    if startIndex >= permCount then
+        local msg = string.format("Cycle %d already complete (%d permutations)", cycle, permCount)
+        S.sweepStatusText = msg
+        print(msg)
+        return
+    end
+    local ok, err = ensureCsvHeader()
+    if not ok then
+        print(err)
+        S.sweepStatusText = err
+        return
+    end
+    S.sweepPrevRunSimulations = MAP.runSimulations
+    S.sweepActive = true
+    S.sweepRecording = false
+    S.perm_count = permCount
+    S.perm_index = startIndex
+    S.sim_index = math.max(maxSimIndex, 0)
+    MAP.runSimulations = true
+    MAP.autoRestartPlayback = true
+    updateSweepStatus()
+    print(string.format(
+        "CSV sweep starting: cycle %d perm %d / %d -> %s",
+        cycle, startIndex + 1, permCount, CSV_PATH
+    ))
+    resetRunState()
+    applyPermutation(cycle, startIndex)
+    S.wasPlaying = false
+    S.loadedMoviePath = nil
+    PCSX.Movie.stop()
+    PCSX.pauseEmulator()
+    if #S.breakpoints == 0 then
+        registerSimulationBreakpoints()
+    end
+    startPlayback()
+end
+
+cancelCsvSweep = function()
+    if not S.sweepActive then
+        return
+    end
+    finishCsvSweep(string.format(
+        "CSV sweep cancelled: cycle %d at perm %d / %d",
+        S.activeCycle,
+        S.perm_index + 1,
+        S.perm_count
+    ), { restoreRunSimulations = true })
+end
+
+S.startCsvSweep = startCsvSweep
+S.cancelCsvSweep = cancelCsvSweep
 
 local function tryCompleteCycle()
     if not MAP.runSimulations then
@@ -1178,7 +1602,29 @@ local function tryCompleteCycle()
         return
     end
     local frame = getGameFrame()
-    print(string.format(
+    S.runRecord.cycle_complete_frame = frame
+    if S.sweepActive then
+        if not S.sweepRecording then
+            return
+        end
+        if not flushCsvRow() then
+            finishCsvSweep(string.format("CSV sweep failed on cycle %d perm %d", S.activeCycle, S.perm_index + 1))
+            return
+        end
+        S.perm_index = S.perm_index + 1
+        if S.perm_index >= S.perm_count then
+            finishCsvSweep(string.format(
+                "Cycle %d sweep complete: %d rows written to %s",
+                S.activeCycle, S.perm_count, CSV_PATH
+            ))
+            return
+        end
+        updateSweepStatus()
+        applyPermutation(S.activeCycle, S.perm_index)
+        restartPlayback(string.format("CSV sweep perm %d / %d", S.perm_index + 1, S.perm_count))
+        return
+    end
+    logSim(string.format(
         "cycle complete: fight cycle %d eggs_dropped=%d eggs_hatched=%d frame=%d",
         S.activeCycle,
         S.egg_count,
@@ -1205,7 +1651,14 @@ local function onEggSpawned()
     S.eggDataToBird[eggData] = bird and bird.id or nil
     S.egg_count = S.egg_count + 1
     local frame = getGameFrame()
-    print(string.format(
+    if bird then
+        S.runRecord.egg_spawn_frames[bird.id] = frame
+        S.runRecord.hatch_timers[bird.id] = hatchTimer
+        if not S.runRecord.weapons[bird.id] then
+            S.runRecord.weapons[bird.id] = mobyIdToWeapon(dropId)
+        end
+    end
+    logSim(string.format(
         "egg spawn: bird=%s random_delay=%d hatch_timer=%d drop=%s frame=%d",
         birdLabelFromData(birdData), randomDelay, hatchTimer, dropLabel, frame
     ))
@@ -1218,7 +1671,10 @@ local function onEggHatched()
     local birdId = S.eggDataToBird[eggData]
     local birdLabel = birdId ~= nil and tostring(birdId) or string.format("unknown(0x%08x)", eggData)
     local frame = getGameFrame()
-    print(string.format("egg hatched: bird=%s frame=%d", birdLabel, frame))
+    logSim(string.format("egg hatched: bird=%s frame=%d", birdLabel, frame))
+    if birdId ~= nil then
+        S.runRecord.hatch_frames[birdId] = frame
+    end
     S.egg_hatch_count = S.egg_hatch_count + 1
     tryCompleteCycle()
     return true
@@ -1238,11 +1694,11 @@ local function onVultureReset()
     local hadEgg = S.cycle_egg[bird.id]
     local target = S.birdDropTarget[bird.id]
     if hadEgg then
-        print(string.format("despawn: bird=%s egg=true frame=%d", birdLabel, frame))
+        logSim(string.format("despawn: bird=%s egg=true frame=%d", birdLabel, frame))
     elseif target then
-        print(string.format("despawn: bird=%s egg=false target=%d frame=%d", birdLabel, target, frame))
+        logSim(string.format("despawn: bird=%s egg=false target=%d frame=%d", birdLabel, target, frame))
     else
-        print(string.format("despawn: bird=%s egg=false frame=%d", birdLabel, frame))
+        logSim(string.format("despawn: bird=%s egg=false frame=%d", birdLabel, frame))
     end
 
     if not hadEgg then
@@ -1299,6 +1755,7 @@ local function registerListeners()
 
     S.listeners[#S.listeners + 1] = PCSX.Events.createEventListener("ExecutionFlow::Reset", function(event)
         if not MAP.runSimulations or not S.loopActive then return end
+        if S.sweepActive and not event.hard then return end
         stopLoop(event.hard and "Hard reset, RNG loop stopped" or "Soft reset, RNG loop stopped")
     end)
 
@@ -1314,6 +1771,7 @@ local function main()
     S.loadedMoviePath = nil
     S.wasPlaying = false
     S.loopActive = true
+    S.mapWindowOpen = true
     applyCycleBirdPreset(S.activeCycle)
     registerMapUi()
     registerListeners()
