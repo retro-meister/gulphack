@@ -38,8 +38,8 @@ local EGG_DATA_DROP_ID = 0x0c
 local EGG_OUTLINE_COLOR = 0xFF4488FF
 
 local BIRDS = {
-    { moby = 0x80116a50, data = 0x80120e44, id = 0, color = 0xFF0000FF },
-    { moby = 0x801169f8, data = 0x80120c64, id = 1, color = 0xFF00FF00 },
+    { moby = 0x80116a50, data = 0x80120e44, id = 0, color = 0xFF0000FF, forceDrop = 7 },
+    { moby = 0x801169f8, data = 0x80120c64, id = 1, color = 0xFF00FF00, forceDrop = 5 },
     { moby = 0x80116b00, data = 0x80120e88, id = 2, color = 0xFFFF0000 },
 }
 
@@ -60,6 +60,7 @@ local MAP = {
     sprite = nil,
 }
 local VULTURE_MAP_MIN_Z = 20000
+local DROP_TARGET_ROLL_BP = 0x80077498
 local DROP_LOCATION_BP = 0x80077448
 local EGG_SPAWN_BP = 0x80077a48
 
@@ -595,12 +596,51 @@ local function markEggDropTarget(eggData, birdId)
     end
 end
 
+local function isDropTargetIndex(index)
+    return index >= DROP_TARGET_FIRST and index <= DROP_TARGET_LAST
+end
+
+local function applyForcedDropRoll(regs, bird)
+    local naturalRoll = regs.v0
+    local forced = bird and bird.forceDrop
+    if forced == nil then
+        return naturalRoll, naturalRoll
+    end
+    if not isDropTargetIndex(forced) then
+        print(string.format("ignored invalid forceDrop %d for bird %d", forced, bird.id))
+        return naturalRoll, naturalRoll
+    end
+    regs.v0 = forced
+    return forced, naturalRoll
+end
+
+local function onDropTargetRoll()
+    local regs = PCSX.getRegisters().GPR.n
+    local birdData = regs.s2
+    local bird = BIRDS_BY_DATA[birdData]
+    local roll, naturalRoll = applyForcedDropRoll(regs, bird)
+    local birdLabel = birdLabelFromData(birdData)
+    local frame = PCSX.Movie.getFrame()
+    if roll ~= naturalRoll then
+        print(string.format(
+            "drop roll: bird=%s roll=%d (forced from %d) frame=%d",
+            birdLabel, roll, naturalRoll, frame
+        ))
+    else
+        print(string.format(
+            "drop roll: bird=%s roll=%d frame=%d",
+            birdLabel, roll, frame
+        ))
+    end
+    return true
+end
+
 local function onDropLocationSelected()
     local regs = PCSX.getRegisters().GPR.n
     local birdData = regs.s2
     local spawnLoc = regs.s0
     local bird = BIRDS_BY_DATA[birdData]
-    if bird and spawnLoc >= DROP_TARGET_FIRST and spawnLoc <= DROP_TARGET_LAST then
+    if bird and isDropTargetIndex(spawnLoc) then
         S.claimedDropTargets[spawnLoc] = bird.color
         S.birdDropTarget[bird.id] = spawnLoc
     end
@@ -670,6 +710,7 @@ end
 
 local function registerBreakpoints()
     S.breakpoints = {
+        PCSX.addBreakpoint(DROP_TARGET_ROLL_BP, 'Exec', 4, '', onDropTargetRoll, 'gulp drop target roll'),
         PCSX.addBreakpoint(DROP_LOCATION_BP, 'Exec', 4, '', onDropLocationSelected, 'gulp drop location'),
         PCSX.addBreakpoint(EGG_SPAWN_BP, 'Exec', 4, '', onEggSpawned, 'gulp egg spawn'),
     }
