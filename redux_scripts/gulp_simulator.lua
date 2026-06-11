@@ -70,6 +70,7 @@ local SPYRO_ADDR = 0x80069ff0
 local SPYRO_COLOR = 0xFFAA00FF
 
 local GULP_ADDR = 0x801169a0
+local GULP_ISOLATE_Z = 10000
 local GULP_COLOR = 0xFF00FF00
 
 local CAM_COLOR = 0xFF00FFFF
@@ -165,6 +166,7 @@ local MAP = {
     autoFit = true,
     rotateWithCamera = true,
     disableRender = false,
+    isolateGulp = true,
     infiniteHealth = true,
     autoRestartPlayback = true,
     runSimulations = true,
@@ -1070,6 +1072,8 @@ local function drawGulpMapFrame()
         if healthChanged then
             setHealthPatch(MAP.infiniteHealth)
         end
+        imgui.SameLine()
+        _, MAP.isolateGulp = imgui.Checkbox('Isolate Gulp', MAP.isolateGulp)
         imgui.Separator()
         if S.sweepActive then
             imgui.BeginDisabled(true)
@@ -1174,8 +1178,15 @@ local function resetRunState()
     S.runRecord = newRunRecord()
 end
 
+local function isolateGulpPosition()
+    writeRam32(GULP_ADDR + MOBY_POS_Z, GULP_ISOLATE_Z)
+end
+
 local function onUpdateGameFrame()
     S.gameFrame = S.gameFrame + 1
+    if MAP.isolateGulp then
+        isolateGulpPosition()
+    end
     return true
 end
 
@@ -1781,19 +1792,21 @@ local function main()
     if MAP.runSimulations then
         registerSimulationBreakpoints()
         print(string.format(
-            "RNG movie loop starting: fight cycle %d %s (render %s, infinite health %s, auto-restart %s)",
+            "RNG movie loop starting: fight cycle %d %s (render %s, infinite health %s, isolate gulp %s, auto-restart %s)",
             S.activeCycle,
             movieForCycle(S.activeCycle),
             MAP.disableRender and "disabled" or "enabled",
             MAP.infiniteHealth and "on" or "off",
+            MAP.isolateGulp and "on" or "off",
             MAP.autoRestartPlayback and "on" or "off"
         ))
         startPlayback()
     else
         print(string.format(
-            "Gulp map active (simulations off, force drops armed, render %s, infinite health %s)",
+            "Gulp map active (simulations off, force drops armed, render %s, infinite health %s, isolate gulp %s)",
             MAP.disableRender and "disabled" or "enabled",
-            MAP.infiniteHealth and "on" or "off"
+            MAP.infiniteHealth and "on" or "off",
+            MAP.isolateGulp and "on" or "off"
         ))
     end
 end
