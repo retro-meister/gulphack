@@ -103,7 +103,7 @@ local MAP = {
 }
 local VULTURE_MAP_MIN_Z = 20000
 local DROP_TARGET_ROLL_BP = 0x80077498
-local DROP_WEAPON_ROLL_BP = 0x8007783c
+local DROP_WEAPON_FORCE_BP = 0x800779c4
 local DROP_LOCATION_BP = 0x80077448
 local VULTURE_RESET_BP = 0x8007742c
 local EGG_SPAWN_BP = 0x80077a48
@@ -114,21 +114,30 @@ local DROP_IDS = {
     [0x198] = "ROCKET",
 }
 
-local WEAPON_FORCE_ROLLS = {
-    bomb = 20,
-    barrel = 60,
-    rocket = 90,
+local WEAPON_FORCE_MOBY = {
+    barrel = 0x196,
+    bomb = 0x197,
+    rocket = 0x198,
 }
-local WEAPON_FORCE_KEYS = { nil, 'barrel', 'bomb', 'rocket' }
+local WEAPON_FORCE_KEYS = { 'none', 'barrel', 'bomb', 'rocket' }
 local WEAPON_FORCE_COMBO_ITEMS = 'None\0Barrel\0Bomb\0Rocket\0'
 
-local function weaponForceComboIndex(forceWeapon)
+local function weaponForceKeyToComboIndex(forceWeapon)
+    local lookup = forceWeapon or 'none'
     for i, key in ipairs(WEAPON_FORCE_KEYS) do
-        if key == forceWeapon then
+        if key == lookup then
             return i - 1
         end
     end
     return 0
+end
+
+local function weaponForceComboIndexToKey(comboIndex)
+    local key = WEAPON_FORCE_KEYS[comboIndex + 1] or 'none'
+    if key == 'none' then
+        return nil
+    end
+    return key
 end
 
 _G.GulpRngLoop = _G.GulpRngLoop or {
@@ -563,9 +572,9 @@ end
 
 local switchActiveCycle
 local startSimulations, stopSimulations
-local registerForceDropBreakpoint
+local registerForceBreakpoints
 local registerSimulationBreakpoints
-local unregisterForceDropBreakpoint
+local unregisterForceBreakpoints
 local unregisterSimulationBreakpoints
 
 local function drawGulpMapFrame()
@@ -662,7 +671,7 @@ local function drawGulpMapFrame()
             imgui.SameLine()
             local weaponComboW = imgui.CalcTextSize('Rocket')
             imgui.SetNextItemWidth(weaponComboW + imgui.GetFrameHeight() * 1.5)
-            local weaponIndex = weaponForceComboIndex(bird.forceWeapon)
+            local weaponIndex = weaponForceKeyToComboIndex(bird.forceWeapon)
             local weaponChanged
             weaponChanged, weaponIndex = imgui.Combo(
                 '##bird_weapon_' .. bird.id,
@@ -670,7 +679,7 @@ local function drawGulpMapFrame()
                 WEAPON_FORCE_COMBO_ITEMS
             )
             if weaponChanged then
-                bird.forceWeapon = WEAPON_FORCE_KEYS[weaponIndex + 1]
+                bird.forceWeapon = weaponForceComboIndexToKey(weaponIndex)
             end
         end
         local gulpX, gulpY, gulpZ = readMobyXYZ(GULP_ADDR)
@@ -730,7 +739,7 @@ end
 local function teardown()
     restoreRenderPatch()
     restoreHealthPatch()
-    unregisterForceDropBreakpoint()
+    unregisterForceBreakpoints()
     unregisterSimulationBreakpoints()
     for _, listener in ipairs(S.listeners) do
         listener:remove()
@@ -830,36 +839,36 @@ local function onDropTargetRoll()
     return true
 end
 
-local function applyForcedWeaponRoll(regs, bird)
-    local naturalRoll = regs.v0
+local function applyForcedWeaponContents(regs, bird)
+    local naturalMoby = regs.v0
     local key = bird and bird.forceWeapon
     if key == nil then
-        return naturalRoll, naturalRoll
+        return naturalMoby, naturalMoby
     end
-    local forced = WEAPON_FORCE_ROLLS[key]
-    if forced == nil then
-        return naturalRoll, naturalRoll
+    local forcedMoby = WEAPON_FORCE_MOBY[key]
+    if forcedMoby == nil then
+        return naturalMoby, naturalMoby
     end
-    regs.v0 = forced
-    return forced, naturalRoll
+    regs.v0 = forcedMoby
+    return forcedMoby, naturalMoby
 end
 
-local function onWeaponRoll()
+local function onWeaponContentsForced()
     local regs = PCSX.getRegisters().GPR.n
     local birdData = regs.s2
     local bird = BIRDS_BY_DATA[birdData]
-    local roll, naturalRoll = applyForcedWeaponRoll(regs, bird)
+    local mobyId, naturalMoby = applyForcedWeaponContents(regs, bird)
     local birdLabel = birdLabelFromData(birdData)
     local frame = PCSX.Movie.getFrame()
-    if roll ~= naturalRoll then
+    if mobyId ~= naturalMoby then
         print(string.format(
-            "weapon roll: bird=%s roll=%d (forced from %d) frame=%d",
-            birdLabel, roll, naturalRoll, frame
+            "weapon contents: bird=%s moby=0x%03x (forced from 0x%03x) frame=%d",
+            birdLabel, mobyId, naturalMoby, frame
         ))
     else
         print(string.format(
-            "weapon roll: bird=%s roll=%d frame=%d",
-            birdLabel, roll, frame
+            "weapon contents: bird=%s moby=0x%03x frame=%d",
+            birdLabel, mobyId, frame
         ))
     end
     return true
@@ -916,6 +925,7 @@ startPlayback = function()
         S.loadedMoviePath = nil
         unregisterSimulationBreakpoints()
         MAP.runSimulations = false
+        registerForceBreakpoints()
     else
         S.wasPlaying = true
     end
@@ -935,7 +945,7 @@ end
 
 S.switchActiveCycle = switchActiveCycle
 
-unregisterForceDropBreakpoint = function()
+unregisterForceBreakpoints = function()
     if S.forceDropBreakpoint then
         S.forceDropBreakpoint:remove()
         S.forceDropBreakpoint = nil
@@ -960,6 +970,7 @@ stopSimulations = function()
     PCSX.Movie.stop()
     unregisterSimulationBreakpoints()
     resetRunState()
+    registerForceBreakpoints()
 end
 
 startSimulations = function()
@@ -1063,7 +1074,7 @@ local function onVultureReset()
     return true
 end
 
-registerForceDropBreakpoint = function()
+registerForceBreakpoints = function()
     if not S.forceDropBreakpoint then
         S.forceDropBreakpoint = PCSX.addBreakpoint(
             DROP_TARGET_ROLL_BP, 'Exec', 4, '', onDropTargetRoll, 'gulp drop target roll'
@@ -1071,7 +1082,7 @@ registerForceDropBreakpoint = function()
     end
     if not S.forceWeaponBreakpoint then
         S.forceWeaponBreakpoint = PCSX.addBreakpoint(
-            DROP_WEAPON_ROLL_BP, 'Exec', 4, '', onWeaponRoll, 'gulp weapon roll'
+            DROP_WEAPON_FORCE_BP, 'Exec', 4, '', onWeaponContentsForced, 'gulp weapon contents'
         )
     end
 end
@@ -1118,7 +1129,7 @@ local function main()
     S.loopActive = true
     registerMapUi()
     registerListeners()
-    registerForceDropBreakpoint()
+    registerForceBreakpoints()
     applyRenderPatch()
     applyHealthPatch()
     if MAP.runSimulations then
@@ -1134,7 +1145,7 @@ local function main()
         startPlayback()
     else
         print(string.format(
-            "Gulp map active (simulations off, render %s, infinite health %s)",
+            "Gulp map active (simulations off, force drops armed, render %s, infinite health %s)",
             MAP.disableRender and "disabled" or "enabled",
             MAP.infiniteHealth and "on" or "off"
         ))

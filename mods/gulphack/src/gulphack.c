@@ -78,7 +78,7 @@ static const GulpDropScript drop_script[GULP_NUM_BIRDS][GULP_BIRD_SCRIPT_LEN] = 
     {
         {  7, BARREL },
         {  1, ROCKET },
-        {  15, ROCKET },
+        {  15, BARREL },
         { 25, ROCKET },
     },
     // Bird 1
@@ -90,7 +90,7 @@ static const GulpDropScript drop_script[GULP_NUM_BIRDS][GULP_BIRD_SCRIPT_LEN] = 
     },
     // Bird 2
     {
-        { 16, BARREL },
+        { 16, ROCKET },
         { 11, ROCKET },
     },
 };
