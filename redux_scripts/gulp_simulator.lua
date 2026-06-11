@@ -1,16 +1,20 @@
 local CYCLE_COUNT = 4
-local MOVIES = {
-    "/Users/retro/repos/pcsx-redux/movies/gulp_phase1.pcsxmv",
-    "/Users/retro/repos/pcsx-redux/movies/gulp_phase2.pcsxmv",
-    "/Users/retro/repos/pcsx-redux/movies/gulp_phase3.pcsxmv",
-    "/Users/retro/repos/pcsx-redux/movies/gulp_phase4.pcsxmv",
+local MOVIE_DIR = "/Users/retro/repos/pcsx-redux/movies"
+local MOVIES_MOVE = {
+    MOVIE_DIR .. "/gulp_phase1.pcsxmv",
+    MOVIE_DIR .. "/gulp_phase2.pcsxmv",
+    MOVIE_DIR .. "/gulp_phase3.pcsxmv",
+    MOVIE_DIR .. "/gulp_phase4.pcsxmv",
 }
+local MOVIES_NOMOVE = {
+    MOVIE_DIR .. "/gulp_phase1_nomove.pcsxmv",
+    MOVIE_DIR .. "/gulp_phase2_nomove.pcsxmv",
+    MOVIE_DIR .. "/gulp_phase3_nomove.pcsxmv",
+    MOVIE_DIR .. "/gulp_phase4_nomove.pcsxmv",
+}
+local USE_MOVE_MOVIES = true
 local AUTO_RESTART_PLAYBACK = true
 local RUN_SIMULATIONS = true
-
-local function movieForCycle(cycle)
-    return MOVIES[cycle]
-end
 
 local function clampCycle(cycle)
     if cycle < 1 then
@@ -164,9 +168,16 @@ local MAP = {
     infiniteHealth = true,
     autoRestartPlayback = true,
     runSimulations = true,
+    useMoveMovies = true,
     scale = 1.2,
     sprite = nil,
 }
+
+local function movieForCycle(cycle)
+    local movies = MAP.useMoveMovies and MOVIES_MOVE or MOVIES_NOMOVE
+    return movies[cycle]
+end
+
 local VULTURE_MAP_MIN_Z = 20000
 local DROP_TARGET_ROLL_BP = 0x80077498
 local DROP_WEAPON_FORCE_BP = 0x800779c4
@@ -234,6 +245,7 @@ local S = _G.GulpRngLoop
 
 MAP.autoRestartPlayback = AUTO_RESTART_PLAYBACK
 MAP.runSimulations = RUN_SIMULATIONS
+MAP.useMoveMovies = USE_MOVE_MOVIES
 S.activeCycle = clampCycle(S.activeCycle or 1)
 
 S.egg_count = S.egg_count or 0
@@ -637,6 +649,7 @@ local function drawMapMarkers(birds, ctx)
 end
 
 local switchActiveCycle
+local reloadActiveMovie
 local restartPlayback, startPlayback
 local startSimulations, stopSimulations
 local registerForceBreakpoints
@@ -703,6 +716,12 @@ local function drawGulpMapFrame()
         imgui.SameLine()
         if imgui.Button('Clear forces') then
             clearBirdForces()
+        end
+        imgui.SameLine()
+        local moveMoviesChanged
+        moveMoviesChanged, MAP.useMoveMovies = imgui.Checkbox('Move', MAP.useMoveMovies)
+        if moveMoviesChanged then
+            reloadActiveMovie()
         end
         if not MAP.runSimulations then
             imgui.EndDisabled()
@@ -1020,6 +1039,21 @@ startPlayback = function()
     end
 end
 
+reloadActiveMovie = function()
+    S.wasPlaying = false
+    PCSX.Movie.stop()
+    S.loadedMoviePath = nil
+    print(string.format(
+        "Using %s movie for cycle %d: %s",
+        MAP.useMoveMovies and "move" or "nomove",
+        S.activeCycle,
+        movieForCycle(S.activeCycle)
+    ))
+    if S.loopActive and MAP.runSimulations then
+        startPlayback()
+    end
+end
+
 switchActiveCycle = function(newCycle)
     S.activeCycle = clampCycle(newCycle)
     S.wasPlaying = false
@@ -1033,6 +1067,7 @@ switchActiveCycle = function(newCycle)
 end
 
 S.switchActiveCycle = switchActiveCycle
+S.reloadActiveMovie = reloadActiveMovie
 S.applyCycleBirdPreset = applyCycleBirdPreset
 S.clearBirdForces = clearBirdForces
 
