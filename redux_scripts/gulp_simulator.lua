@@ -24,6 +24,9 @@ local RNG_ADDR = 0x8006d144
 local RENDER_PATCH_SITES = {
     { addr = 0x80011afc, vanilla = 0x0c0055bf, patch = 0x00000000 },
 }
+local HEALTH_PATCH_SITES = {
+    { addr = 0x8002b118, vanilla = 0x2482ffff, patch = 0x24820000 },
+}
 
 local MOBY_POS_X = 0x0c
 local MOBY_POS_Y = 0x10
@@ -77,6 +80,8 @@ local MAP = {
     autoFit = true,
     rotateWithCamera = true,
     disableRender = false,
+    infiniteHealth = true,
+    autoRestartPlayback = true,
     scale = 1.2,
     sprite = nil,
 }
@@ -116,7 +121,7 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
 
 local S = _G.GulpRngLoop
 
-S.autoRestartPlayback = AUTO_RESTART_PLAYBACK
+MAP.autoRestartPlayback = AUTO_RESTART_PLAYBACK
 S.activeCycle = clampCycle(S.activeCycle or 1)
 
 S.egg_count = S.egg_count or 0
@@ -191,6 +196,12 @@ end
 
 local function setRenderPatch(enabled)
     for _, site in ipairs(RENDER_PATCH_SITES) do
+        writeRam32(site.addr, enabled and site.patch or site.vanilla)
+    end
+end
+
+local function setHealthPatch(enabled)
+    for _, site in ipairs(HEALTH_PATCH_SITES) do
         writeRam32(site.addr, enabled and site.patch or site.vanilla)
     end
 end
@@ -541,8 +552,13 @@ local function drawGulpMapFrame()
         drawMapMoby(mapCtx, SPYRO_ADDR, SPYRO_COLOR, 16, nil, 0x0e, 0x00, 0x04)
         drawMapCamera(mapCtx)
         local prevCycle = S.activeCycle
+        imgui.AlignTextToFramePadding()
+        imgui.TextUnformatted('Cycle')
+        imgui.SameLine()
+        local cycleTextW = imgui.CalcTextSize('4')
+        imgui.SetNextItemWidth(cycleTextW + imgui.GetFrameHeight() * 2.75)
         local cycleChanged
-        cycleChanged, S.activeCycle = imgui.InputInt('Cycle', S.activeCycle, 1, 1)
+        cycleChanged, S.activeCycle = imgui.InputInt('##gulp_cycle', S.activeCycle, 1, 1)
         S.activeCycle = clampCycle(S.activeCycle)
         if cycleChanged and S.activeCycle ~= prevCycle then
             switchActiveCycle(S.activeCycle)
@@ -555,6 +571,14 @@ local function drawGulpMapFrame()
         if renderChanged then
             setRenderPatch(MAP.disableRender)
         end
+        imgui.SameLine()
+        local healthChanged
+        healthChanged, MAP.infiniteHealth = imgui.Checkbox('Infinite health', MAP.infiniteHealth)
+        if healthChanged then
+            setHealthPatch(MAP.infiniteHealth)
+        end
+        imgui.SameLine()
+        _, MAP.autoRestartPlayback = imgui.Checkbox('Auto-restart', MAP.autoRestartPlayback)
         local gulpX, gulpY, gulpZ = readMobyXYZ(GULP_ADDR)
         imgui.TextUnformatted(string.format('spyro: x=%d y=%d z=%d', spyroX, spyroY, spyroZ))
         imgui.TextUnformatted(string.format('gulp: x=%d y=%d z=%d', gulpX, gulpY, gulpZ))
@@ -576,6 +600,16 @@ end
 
 local function restoreRenderPatch()
     setRenderPatch(false)
+end
+
+local function applyHealthPatch()
+    if MAP.infiniteHealth then
+        setHealthPatch(true)
+    end
+end
+
+local function restoreHealthPatch()
+    setHealthPatch(false)
 end
 
 local function patchRng()
@@ -601,6 +635,7 @@ end
 
 local function teardown()
     restoreRenderPatch()
+    restoreHealthPatch()
     for _, bp in ipairs(S.breakpoints) do
         bp:remove()
     end
@@ -771,7 +806,7 @@ restartPlayback = function(reason)
     S.wasPlaying = false
     PCSX.Movie.stop()
     print(reason)
-    if not S.autoRestartPlayback then
+    if not MAP.autoRestartPlayback then
         print("auto-restart disabled, playback stopped")
         return
     end
@@ -866,6 +901,7 @@ end
 local function registerListeners()
     S.listeners[#S.listeners + 1] = PCSX.Events.createEventListener("ExecutionFlow::SaveStateLoaded", function()
         applyRenderPatch()
+        applyHealthPatch()
         if S.patchRngOnLoad then
             patchRng()
             S.patchRngOnLoad = false
@@ -898,12 +934,14 @@ local function main()
     registerListeners()
     registerBreakpoints()
     applyRenderPatch()
+    applyHealthPatch()
     print(string.format(
-        "RNG movie loop starting: fight cycle %d %s (render %s, auto-restart %s)",
+        "RNG movie loop starting: fight cycle %d %s (render %s, infinite health %s, auto-restart %s)",
         S.activeCycle,
         movieForCycle(S.activeCycle),
         MAP.disableRender and "disabled" or "enabled",
-        S.autoRestartPlayback and "on" or "off"
+        MAP.infiniteHealth and "on" or "off",
+        MAP.autoRestartPlayback and "on" or "off"
     ))
     startPlayback()
 end
