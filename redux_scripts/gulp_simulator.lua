@@ -179,6 +179,7 @@ local function movieForCycle(cycle)
 end
 
 local VULTURE_MAP_MIN_Z = 20000
+local UPDATE_GAME_BP = 0x80011af4
 local DROP_TARGET_ROLL_BP = 0x80077498
 local DROP_WEAPON_FORCE_BP = 0x800779c4
 local DROP_LOCATION_BP = 0x80077448
@@ -226,8 +227,10 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
     bird_count = 0,
     egg_count = 0,
     bird_dropped = { [0] = false, [1] = false, [2] = false },
+    gameFrame = 0,
     forceDropBreakpoint = nil,
     forceWeaponBreakpoint = nil,
+    gameFrameBreakpoint = nil,
     breakpoints = {},
     fixedMapBounds = nil,
     claimedDropTargets = {},
@@ -272,6 +275,11 @@ if not S.bird_despawn_count then
 end
 S.despawn_count = S.despawn_count or 0
 S.simulation_count = S.simulation_count or S.reset_count or 0
+S.gameFrame = S.gameFrame or 0
+
+local function getGameFrame()
+    return S.gameFrame
+end
 
 local bit = require('bit')
 
@@ -844,6 +852,12 @@ local function resetRunState()
     S.cycle_despawned = {}
     S.despawn_count = 0
     S.bird_despawn_count = {}
+    S.gameFrame = 0
+end
+
+local function onUpdateGameFrame()
+    S.gameFrame = S.gameFrame + 1
+    return true
 end
 
 local function teardown()
@@ -934,7 +948,7 @@ local function onDropTargetRoll()
     local bird = BIRDS_BY_DATA[birdData]
     local roll, naturalRoll = applyForcedDropRoll(regs, bird)
     local birdLabel = birdLabelFromData(birdData)
-    local frame = PCSX.Movie.getFrame()
+    local frame = getGameFrame()
     if roll ~= naturalRoll then
         print(string.format(
             "drop roll: bird=%s roll=%d (forced from %d) frame=%d",
@@ -969,7 +983,7 @@ local function onWeaponContentsForced()
     local bird = BIRDS_BY_DATA[birdData]
     local mobyId, naturalMoby = applyForcedWeaponContents(regs, bird)
     local birdLabel = birdLabelFromData(birdData)
-    local frame = PCSX.Movie.getFrame()
+    local frame = getGameFrame()
     if mobyId ~= naturalMoby then
         print(string.format(
             "weapon contents: bird=%s moby=0x%03x (forced from 0x%03x) frame=%d",
@@ -998,7 +1012,7 @@ local function onDropLocationSelected()
     end
     S.bird_count = S.bird_count + 1
     local birdLabel = birdLabelFromData(birdData)
-    local frame = PCSX.Movie.getFrame()
+    local frame = getGameFrame()
     print(string.format(
         "drop target: bird=%s location=%d frame=%d",
         birdLabel, spawnLoc, frame
@@ -1070,8 +1084,13 @@ S.switchActiveCycle = switchActiveCycle
 S.reloadActiveMovie = reloadActiveMovie
 S.applyCycleBirdPreset = applyCycleBirdPreset
 S.clearBirdForces = clearBirdForces
+S.getGameFrame = getGameFrame
 
 unregisterForceBreakpoints = function()
+    if S.gameFrameBreakpoint then
+        S.gameFrameBreakpoint:remove()
+        S.gameFrameBreakpoint = nil
+    end
     if S.forceDropBreakpoint then
         S.forceDropBreakpoint:remove()
         S.forceDropBreakpoint = nil
@@ -1134,7 +1153,7 @@ local function tryCompleteCycle()
             return
         end
     end
-    local frame = PCSX.Movie.getFrame()
+    local frame = getGameFrame()
     print(string.format(
         "cycle complete: fight cycle %d spawned=%s eggs=%s despawns=%s frame=%d",
         S.activeCycle,
@@ -1161,7 +1180,7 @@ local function onEggSpawned()
     end
     markEggDropTarget(eggData, bird and bird.id)
     S.egg_count = S.egg_count + 1
-    local frame = PCSX.Movie.getFrame()
+    local frame = getGameFrame()
     print(string.format(
         "egg spawn: bird=%s random_delay=%d hatch_timer=%d drop=%s frame=%d",
         birdLabelFromData(birdData), randomDelay, hatchTimer, dropLabel, frame
@@ -1173,7 +1192,7 @@ local function onVultureReset()
     local regs = PCSX.getRegisters().GPR.n
     local birdData = regs.s2
     local bird = BIRDS_BY_DATA[birdData]
-    local frame = PCSX.Movie.getFrame()
+    local frame = getGameFrame()
     local birdLabel = birdLabelFromData(birdData)
 
     if not bird or not S.cycle_spawned[bird.id] or S.cycle_despawned[bird.id] then
@@ -1201,6 +1220,11 @@ local function onVultureReset()
 end
 
 registerForceBreakpoints = function()
+    if not S.gameFrameBreakpoint then
+        S.gameFrameBreakpoint = PCSX.addBreakpoint(
+            UPDATE_GAME_BP, 'Exec', 4, '', onUpdateGameFrame, 'gulp updategame frame'
+        )
+    end
     if not S.forceDropBreakpoint then
         S.forceDropBreakpoint = PCSX.addBreakpoint(
             DROP_TARGET_ROLL_BP, 'Exec', 4, '', onDropTargetRoll, 'gulp drop target roll'
