@@ -236,6 +236,8 @@ local CSV_HEADER = table.concat({
     "bird0_egg_y", "bird1_egg_y", "bird2_egg_y",
     "bird0_egg_z", "bird1_egg_z", "bird2_egg_z",
     "bird0_spawn_dist", "bird1_spawn_dist", "bird2_spawn_dist",
+    "egg_dist_0_1", "egg_dist_0_2", "egg_dist_1_2",
+    "drop_target_dist_0_1", "drop_target_dist_0_2", "drop_target_dist_1_2",
 }, ",")
 
 local MOBY_TO_WEAPON = {
@@ -389,6 +391,12 @@ local function newRunRecord()
         egg_y = {},
         egg_z = {},
         spawn_dist = {},
+        egg_dist_01 = nil,
+        egg_dist_02 = nil,
+        egg_dist_12 = nil,
+        drop_target_dist_01 = nil,
+        drop_target_dist_02 = nil,
+        drop_target_dist_12 = nil,
         cycle_complete_frame = nil,
     }
 end
@@ -506,7 +514,7 @@ local function logSim(msg)
 end
 
 local function applyPermutation(cycle, permIndex)
-    applyCycleBirdPreset(cycle)
+    clearBirdForces()
     local perm = getPermTable(cycle)[permIndex + 1]
     if not perm then
         return false
@@ -528,7 +536,6 @@ local function flushCsvRow()
         print(err)
         return false
     end
-    local perm = getPermTable(S.activeCycle)[S.perm_index + 1]
     local rr = S.runRecord or newRunRecord()
     S.sim_index = S.sim_index + 1
     local fields = {
@@ -536,9 +543,9 @@ local function flushCsvRow()
         S.activeCycle,
         S.perm_index,
         string.format("0x%08x", S.lastRngSeed or 0),
-        perm and perm[1] or birdRecordField(rr.drops, 0),
-        perm and perm[2] or birdRecordField(rr.drops, 1),
-        perm and perm[3] or birdRecordField(rr.drops, 2),
+        birdRecordField(rr.drops, 0),
+        birdRecordField(rr.drops, 1),
+        birdRecordField(rr.drops, 2),
         birdRecordField(rr.weapons, 0),
         birdRecordField(rr.weapons, 1),
         birdRecordField(rr.weapons, 2),
@@ -566,6 +573,12 @@ local function flushCsvRow()
         birdRecordField(rr.spawn_dist, 0),
         birdRecordField(rr.spawn_dist, 1),
         birdRecordField(rr.spawn_dist, 2),
+        rr.egg_dist_01 or "",
+        rr.egg_dist_02 or "",
+        rr.egg_dist_12 or "",
+        rr.drop_target_dist_01 or "",
+        rr.drop_target_dist_02 or "",
+        rr.drop_target_dist_12 or "",
     }
     ok, err = appendCsvLine(fields)
     if not ok then
@@ -686,6 +699,46 @@ local function dist2d(x1, y1, x2, y2)
     local dx = x1 - x2
     local dy = y1 - y2
     return math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
+end
+
+local function dropTargetXY(dropIndex)
+    if dropIndex == nil or dropIndex < DROP_TARGET_FIRST or dropIndex > DROP_TARGET_LAST then
+        return nil, nil
+    end
+    local pathTable = getDropTargetPathTable()
+    if not pathTable then
+        return nil, nil
+    end
+    local target = readDropTargetEntry(pathTable, dropIndex)
+    return target.x, target.y
+end
+
+local function computeEggPairDistances(rr)
+    local function pairDist(a, b)
+        local x1, y1 = rr.egg_x[a], rr.egg_y[a]
+        local x2, y2 = rr.egg_x[b], rr.egg_y[b]
+        if x1 == nil or x2 == nil then
+            return nil
+        end
+        return dist2d(x1, y1, x2, y2)
+    end
+    rr.egg_dist_01 = pairDist(0, 1)
+    rr.egg_dist_02 = pairDist(0, 2)
+    rr.egg_dist_12 = pairDist(1, 2)
+end
+
+local function computeDropTargetDistances(rr)
+    local function pairDist(a, b)
+        local x1, y1 = dropTargetXY(rr.drops[a])
+        local x2, y2 = dropTargetXY(rr.drops[b])
+        if x1 == nil or x2 == nil then
+            return nil
+        end
+        return dist2d(x1, y1, x2, y2)
+    end
+    rr.drop_target_dist_01 = pairDist(0, 1)
+    rr.drop_target_dist_02 = pairDist(0, 2)
+    rr.drop_target_dist_12 = pairDist(1, 2)
 end
 
 local function collectDropTargets()
@@ -1691,6 +1744,8 @@ local function tryCompleteCycle()
         if not S.sweepRecording then
             return
         end
+        computeEggPairDistances(S.runRecord)
+        computeDropTargetDistances(S.runRecord)
         if not flushCsvRow() then
             finishCsvSweep(string.format("CSV sweep failed on cycle %d perm %d", S.activeCycle, S.perm_index + 1))
             return
