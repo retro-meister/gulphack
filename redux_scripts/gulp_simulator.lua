@@ -173,6 +173,8 @@ local MAP = {
     autoRestartPlayback = true,
     runSimulations = true,
     useMoveMovies = true,
+    recordSummaryCsv = true,
+    recordTrajectories = false,
     scale = 1.2,
     sprite = nil,
 }
@@ -224,6 +226,10 @@ local function weaponForceComboIndexToKey(comboIndex)
 end
 
 local CSV_PATH = "/Users/retro/repos/pcsx-redux/gulp_sweep.csv"
+local TRAJECTORY_CSV_PATH = "/Users/retro/repos/pcsx-redux/gulp_trajectories.csv"
+local TRAJECTORY_CSV_HEADER = table.concat({
+    "sim_index", "cycle", "perm_index", "frame", "bird", "x", "y", "z", "yaw",
+}, ",")
 local CSV_HEADER = table.concat({
     "sim_index", "cycle", "perm_index", "rng_seed",
     "bird0_drop", "bird1_drop", "bird2_drop",
@@ -367,6 +373,76 @@ local function appendCsvLine(fields)
     return true
 end
 
+local function ensureTrajectoryCsvHeader()
+    local f = io.open(TRAJECTORY_CSV_PATH, "r")
+    if f then
+        local first = f:read("*l")
+        f:close()
+        if first and first ~= "" then
+            return true
+        end
+    end
+    f = io.open(TRAJECTORY_CSV_PATH, "w")
+    if not f then
+        return false, string.format("failed to create CSV: %s", TRAJECTORY_CSV_PATH)
+    end
+    f:write(TRAJECTORY_CSV_HEADER, "\n")
+    f:close()
+    return true
+end
+
+local function scanTrajectoryResume(cycle)
+    local maxSimIndex = -1
+    local maxPermIndex = -1
+    local f = io.open(TRAJECTORY_CSV_PATH, "r")
+    if not f then
+        return maxPermIndex, maxSimIndex
+    end
+    local header = f:read("*l")
+    if not header then
+        f:close()
+        return maxPermIndex, maxSimIndex
+    end
+    for line in f:lines() do
+        local simIndex, lineCycle, permIndex = line:match("^(%d+),(%d+),(%d+),")
+        simIndex = tonumber(simIndex)
+        lineCycle = tonumber(lineCycle)
+        permIndex = tonumber(permIndex)
+        if simIndex and simIndex > maxSimIndex then
+            maxSimIndex = simIndex
+        end
+        if lineCycle == cycle and permIndex and permIndex > maxPermIndex then
+            maxPermIndex = permIndex
+        end
+    end
+    f:close()
+    return maxPermIndex, maxSimIndex
+end
+
+local function scanSweepResume(cycle)
+    if MAP.recordSummaryCsv then
+        return scanCsvResume(cycle)
+    end
+    if MAP.recordTrajectories then
+        return scanTrajectoryResume(cycle)
+    end
+    return -1, -1
+end
+
+local function sweepOutputLabel()
+    local parts = {}
+    if MAP.recordSummaryCsv then
+        parts[#parts + 1] = CSV_PATH
+    end
+    if MAP.recordTrajectories then
+        parts[#parts + 1] = TRAJECTORY_CSV_PATH
+    end
+    if #parts == 0 then
+        return "dry run"
+    end
+    return table.concat(parts, " + ")
+end
+
 local function mobyIdToWeapon(mobyId)
     return MOBY_TO_WEAPON[mobyId] or string.format("0x%03x", mobyId)
 end
@@ -437,6 +513,7 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
     mapWindowOpen = true,
     sweepRecording = false,
     sweepPrevRunSimulations = false,
+    trajectoryBuffer = {},
 }
 
 local S = _G.GulpRngLoop
@@ -487,6 +564,7 @@ if S.mapWindowOpen == nil then
 end
 S.sweepRecording = S.sweepRecording or false
 S.sweepPrevRunSimulations = S.sweepPrevRunSimulations or false
+S.trajectoryBuffer = S.trajectoryBuffer or {}
 if not S.runRecord then
     S.runRecord = newRunRecord()
 end
@@ -537,7 +615,6 @@ local function flushCsvRow()
         return false
     end
     local rr = S.runRecord or newRunRecord()
-    S.sim_index = S.sim_index + 1
     local fields = {
         S.sim_index,
         S.activeCycle,
@@ -676,6 +753,65 @@ local function collectBirdPositions()
         }
     end
     return birds
+end
+
+local function recordTrajectoryFrame()
+    if not S.sweepActive or not MAP.recordTrajectories or not S.sweepRecording then
+        return
+    end
+    local frame = S.gameFrame
+    local activeCount = getActiveBirdCount(S.activeCycle)
+    local buf = S.trajectoryBuffer
+    for i = 1, activeCount do
+        local bird = BIRDS[i]
+        local x, y, z = readMobyXYZ(bird.moby)
+        buf[#buf + 1] = {
+            S.activeCycle,
+            S.perm_index,
+            frame,
+            bird.id,
+            x,
+            y,
+            z,
+            readMobyYaw(bird.moby),
+        }
+    end
+end
+
+local function flushTrajectoryBuffer()
+    if #S.trajectoryBuffer == 0 then
+        return true
+    end
+    local ok, err = ensureTrajectoryCsvHeader()
+    if not ok then
+        print(err)
+        return false
+    end
+    local f = io.open(TRAJECTORY_CSV_PATH, "a")
+    if not f then
+        return false, string.format("failed to append CSV: %s", TRAJECTORY_CSV_PATH)
+    end
+    for _, row in ipairs(S.trajectoryBuffer) do
+        local fields = {
+            S.sim_index,
+            row[1],
+            row[2],
+            row[3],
+            row[4],
+            row[5],
+            row[6],
+            row[7],
+            row[8],
+        }
+        local parts = {}
+        for i = 1, #fields do
+            parts[i] = csvField(fields[i])
+        end
+        f:write(table.concat(parts, ","), "\n")
+    end
+    f:close()
+    S.trajectoryBuffer = {}
+    return true
 end
 
 local function getDropTargetPathTable()
@@ -1096,7 +1232,16 @@ local function drawGulpMapFrame()
         if S.sweepActive then
             imgui.BeginDisabled(true)
         end
-        if imgui.Button('Write CSV') then
+        _, MAP.recordSummaryCsv = imgui.Checkbox('Summary CSV', MAP.recordSummaryCsv)
+        imgui.SameLine()
+        _, MAP.recordTrajectories = imgui.Checkbox('Trajectories', MAP.recordTrajectories)
+        if S.sweepActive then
+            imgui.EndDisabled()
+        end
+        if S.sweepActive then
+            imgui.BeginDisabled(true)
+        end
+        if imgui.Button('Sweep') then
             PCSX.nextTick(startCsvSweep)
         end
         if S.sweepActive then
@@ -1106,7 +1251,7 @@ local function drawGulpMapFrame()
         if not S.sweepActive then
             imgui.BeginDisabled(true)
         end
-        if imgui.Button('Cancel CSV') then
+        if imgui.Button('Cancel sweep') then
             PCSX.nextTick(cancelCsvSweep)
         end
         if not S.sweepActive then
@@ -1261,6 +1406,7 @@ local function resetRunState()
     S.bird_despawn_count = {}
     S.gameFrame = 0
     S.runRecord = newRunRecord()
+    S.trajectoryBuffer = {}
 end
 
 local function isolateGulpPosition()
@@ -1273,6 +1419,7 @@ local function onUpdateGameFrame()
     if MAP.isolateGulp then
         isolateGulpPosition()
     end
+    recordTrajectoryFrame()
     return true
 end
 
@@ -1291,7 +1438,7 @@ end
 
 local function stopLoop(reason)
     if S.sweepActive then
-        finishCsvSweep("CSV sweep stopped (loop stopped)")
+        finishCsvSweep("Sweep stopped (loop stopped)")
     end
     S.loopActive = false
     S.wasPlaying = false
@@ -1471,7 +1618,7 @@ startPlayback = function()
         S.wasPlaying = false
         S.loadedMoviePath = nil
         if S.sweepActive then
-            finishCsvSweep(string.format("CSV sweep failed: movie play failed cycle %d", S.activeCycle))
+            finishCsvSweep(string.format("Sweep failed: movie play failed cycle %d", S.activeCycle))
         else
             unregisterSimulationBreakpoints()
             MAP.runSimulations = false
@@ -1545,7 +1692,7 @@ end
 
 stopSimulations = function()
     if S.sweepActive then
-        finishCsvSweep("CSV sweep stopped")
+        finishCsvSweep("Sweep stopped")
         return
     end
     S.wasPlaying = false
@@ -1577,7 +1724,7 @@ restartPlayback = function(reason)
     logSim(reason)
     if not MAP.autoRestartPlayback then
         if S.sweepActive then
-            finishCsvSweep("CSV sweep stopped (auto-restart disabled)")
+            finishCsvSweep("Sweep stopped (auto-restart disabled)")
         else
             logSim("auto-restart disabled, playback stopped")
         end
@@ -1617,7 +1764,7 @@ startCsvSweep = function()
     end
     local cycle = S.activeCycle
     local permCount = permCountForCycle(cycle)
-    local maxPermIndex, maxSimIndex = scanCsvResume(cycle)
+    local maxPermIndex, maxSimIndex = scanSweepResume(cycle)
     local startIndex = maxPermIndex + 1
     if startIndex >= permCount then
         local msg = string.format("Cycle %d already complete (%d permutations)", cycle, permCount)
@@ -1625,11 +1772,21 @@ startCsvSweep = function()
         print(msg)
         return
     end
-    local ok, err = ensureCsvHeader()
-    if not ok then
-        print(err)
-        S.sweepStatusText = err
-        return
+    if MAP.recordSummaryCsv then
+        local ok, err = ensureCsvHeader()
+        if not ok then
+            print(err)
+            S.sweepStatusText = err
+            return
+        end
+    end
+    if MAP.recordTrajectories then
+        local ok, err = ensureTrajectoryCsvHeader()
+        if not ok then
+            print(err)
+            S.sweepStatusText = err
+            return
+        end
     end
     S.sweepPrevRunSimulations = MAP.runSimulations
     S.sweepActive = true
@@ -1641,8 +1798,8 @@ startCsvSweep = function()
     MAP.autoRestartPlayback = true
     updateSweepStatus()
     print(string.format(
-        "CSV sweep starting: cycle %d perm %d / %d -> %s",
-        cycle, startIndex + 1, permCount, CSV_PATH
+        "Sweep starting: cycle %d perm %d / %d -> %s",
+        cycle, startIndex + 1, permCount, sweepOutputLabel()
     ))
     resetRunState()
     applyPermutation(cycle, startIndex)
@@ -1659,7 +1816,7 @@ end
 local function continueCsvSweepAtCycle(cycle)
     while cycle <= CYCLE_COUNT do
         local permCount = permCountForCycle(cycle)
-        local maxPermIndex, maxSimIndex = scanCsvResume(cycle)
+        local maxPermIndex, maxSimIndex = scanSweepResume(cycle)
         local startIndex = maxPermIndex + 1
         if startIndex < permCount then
             S.activeCycle = cycle
@@ -1669,15 +1826,15 @@ local function continueCsvSweepAtCycle(cycle)
             applyPermutation(cycle, startIndex)
             updateSweepStatus()
             print(string.format(
-                "CSV sweep continuing: cycle %d perm %d / %d -> %s",
-                cycle, startIndex + 1, permCount, CSV_PATH
+                "Sweep continuing: cycle %d perm %d / %d -> %s",
+                cycle, startIndex + 1, permCount, sweepOutputLabel()
             ))
             resetRunState()
             S.wasPlaying = false
             S.loadedMoviePath = nil
             PCSX.Movie.stop()
             restartPlayback(string.format(
-                "CSV sweep cycle %d perm %d / %d", cycle, startIndex + 1, permCount
+                "Sweep cycle %d perm %d / %d", cycle, startIndex + 1, permCount
             ))
             return true
         end
@@ -1692,7 +1849,7 @@ cancelCsvSweep = function()
         return
     end
     finishCsvSweep(string.format(
-        "CSV sweep cancelled: cycle %d at perm %d / %d",
+        "Sweep cancelled: cycle %d at perm %d / %d",
         S.activeCycle,
         S.perm_index + 1,
         S.perm_count
@@ -1746,16 +1903,28 @@ local function tryCompleteCycle()
         end
         computeEggPairDistances(S.runRecord)
         computeDropTargetDistances(S.runRecord)
-        if not flushCsvRow() then
-            finishCsvSweep(string.format("CSV sweep failed on cycle %d perm %d", S.activeCycle, S.perm_index + 1))
-            return
+        local writing = MAP.recordSummaryCsv or MAP.recordTrajectories
+        if writing then
+            S.sim_index = S.sim_index + 1
+        end
+        if MAP.recordSummaryCsv then
+            if not flushCsvRow() then
+                finishCsvSweep(string.format("Sweep failed on cycle %d perm %d", S.activeCycle, S.perm_index + 1))
+                return
+            end
+        end
+        if MAP.recordTrajectories then
+            if not flushTrajectoryBuffer() then
+                finishCsvSweep(string.format("Sweep failed on cycle %d perm %d", S.activeCycle, S.perm_index + 1))
+                return
+            end
         end
         S.perm_index = S.perm_index + 1
         if S.perm_index >= S.perm_count then
             local completedCycle = S.activeCycle
             local completeMsg = string.format(
-                "Cycle %d sweep complete: %d rows written to %s",
-                completedCycle, S.perm_count, CSV_PATH
+                "Cycle %d sweep complete: %d sims -> %s",
+                completedCycle, S.perm_count, sweepOutputLabel()
             )
             print(completeMsg)
             if MAP.autoAdvanceCycle and completedCycle < CYCLE_COUNT then
@@ -1764,7 +1933,7 @@ local function tryCompleteCycle()
                     return
                 end
                 finishCsvSweep(string.format(
-                    "All cycles complete through cycle %d: %s", CYCLE_COUNT, CSV_PATH
+                    "All cycles complete through cycle %d: %s", CYCLE_COUNT, sweepOutputLabel()
                 ))
                 return
             end
@@ -1773,7 +1942,7 @@ local function tryCompleteCycle()
         end
         updateSweepStatus()
         applyPermutation(S.activeCycle, S.perm_index)
-        restartPlayback(string.format("CSV sweep perm %d / %d", S.perm_index + 1, S.perm_count))
+        restartPlayback(string.format("Sweep perm %d / %d", S.perm_index + 1, S.perm_count))
         return
     end
     logSim(string.format(
