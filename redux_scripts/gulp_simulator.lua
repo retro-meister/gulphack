@@ -13,6 +13,7 @@ local MOVIES_NOMOVE = {
     MOVIE_DIR .. "/gulp_phase4_nomove.pcsxmv",
 }
 local USE_MOVE_MOVIES = true
+local AUTO_ADVANCE_CYCLE = false
 local AUTO_RESTART_PLAYBACK = true
 local RUN_SIMULATIONS = true
 
@@ -231,6 +232,10 @@ local CSV_HEADER = table.concat({
     "bird0_hatch_timer", "bird1_hatch_timer", "bird2_hatch_timer",
     "bird0_hatch_frame", "bird1_hatch_frame", "bird2_hatch_frame",
     "eggs_dropped", "eggs_hatched", "cycle_complete_frame",
+    "bird0_egg_x", "bird1_egg_x", "bird2_egg_x",
+    "bird0_egg_y", "bird1_egg_y", "bird2_egg_y",
+    "bird0_egg_z", "bird1_egg_z", "bird2_egg_z",
+    "bird0_spawn_dist", "bird1_spawn_dist", "bird2_spawn_dist",
 }, ",")
 
 local MOBY_TO_WEAPON = {
@@ -380,6 +385,10 @@ local function newRunRecord()
         egg_spawn_frames = {},
         hatch_timers = {},
         hatch_frames = {},
+        egg_x = {},
+        egg_y = {},
+        egg_z = {},
+        spawn_dist = {},
         cycle_complete_frame = nil,
     }
 end
@@ -427,6 +436,7 @@ local S = _G.GulpRngLoop
 MAP.autoRestartPlayback = AUTO_RESTART_PLAYBACK
 MAP.runSimulations = RUN_SIMULATIONS
 MAP.useMoveMovies = USE_MOVE_MOVIES
+MAP.autoAdvanceCycle = AUTO_ADVANCE_CYCLE
 S.activeCycle = clampCycle(S.activeCycle or 1)
 
 S.egg_count = S.egg_count or 0
@@ -544,6 +554,18 @@ local function flushCsvRow()
         S.egg_count,
         S.egg_hatch_count,
         rr.cycle_complete_frame or "",
+        birdRecordField(rr.egg_x, 0),
+        birdRecordField(rr.egg_x, 1),
+        birdRecordField(rr.egg_x, 2),
+        birdRecordField(rr.egg_y, 0),
+        birdRecordField(rr.egg_y, 1),
+        birdRecordField(rr.egg_y, 2),
+        birdRecordField(rr.egg_z, 0),
+        birdRecordField(rr.egg_z, 1),
+        birdRecordField(rr.egg_z, 2),
+        birdRecordField(rr.spawn_dist, 0),
+        birdRecordField(rr.spawn_dist, 1),
+        birdRecordField(rr.spawn_dist, 2),
     }
     ok, err = appendCsvLine(fields)
     if not ok then
@@ -658,6 +680,12 @@ local function readDropTargetEntry(pathTable, index)
         x = readRam32s(entryAddr + DROP_TARGET_POS_X),
         y = readRam32s(entryAddr + DROP_TARGET_POS_Y),
     }
+end
+
+local function dist2d(x1, y1, x2, y2)
+    local dx = x1 - x2
+    local dy = y1 - y2
+    return math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
 end
 
 local function collectDropTargets()
@@ -1040,6 +1068,9 @@ local function drawGulpMapFrame()
         if moveMoviesChanged and not S.sweepActive then
             reloadActiveMovie()
         end
+        imgui.SameLine()
+        local autoAdvanceChanged
+        autoAdvanceChanged, MAP.autoAdvanceCycle = imgui.Checkbox('Auto cycle', MAP.autoAdvanceCycle)
         if S.sweepActive then
             imgui.EndDisabled()
         end
@@ -1572,6 +1603,37 @@ startCsvSweep = function()
     startPlayback()
 end
 
+local function continueCsvSweepAtCycle(cycle)
+    while cycle <= CYCLE_COUNT do
+        local permCount = permCountForCycle(cycle)
+        local maxPermIndex, maxSimIndex = scanCsvResume(cycle)
+        local startIndex = maxPermIndex + 1
+        if startIndex < permCount then
+            S.activeCycle = cycle
+            S.perm_count = permCount
+            S.perm_index = startIndex
+            S.sim_index = math.max(maxSimIndex, S.sim_index)
+            applyPermutation(cycle, startIndex)
+            updateSweepStatus()
+            print(string.format(
+                "CSV sweep continuing: cycle %d perm %d / %d -> %s",
+                cycle, startIndex + 1, permCount, CSV_PATH
+            ))
+            resetRunState()
+            S.wasPlaying = false
+            S.loadedMoviePath = nil
+            PCSX.Movie.stop()
+            restartPlayback(string.format(
+                "CSV sweep cycle %d perm %d / %d", cycle, startIndex + 1, permCount
+            ))
+            return true
+        end
+        print(string.format("Cycle %d already complete (%d permutations), skipping", cycle, permCount))
+        cycle = cycle + 1
+    end
+    return false
+end
+
 cancelCsvSweep = function()
     if not S.sweepActive then
         return
@@ -1635,10 +1697,23 @@ local function tryCompleteCycle()
         end
         S.perm_index = S.perm_index + 1
         if S.perm_index >= S.perm_count then
-            finishCsvSweep(string.format(
+            local completedCycle = S.activeCycle
+            local completeMsg = string.format(
                 "Cycle %d sweep complete: %d rows written to %s",
-                S.activeCycle, S.perm_count, CSV_PATH
-            ))
+                completedCycle, S.perm_count, CSV_PATH
+            )
+            print(completeMsg)
+            if MAP.autoAdvanceCycle and completedCycle < CYCLE_COUNT then
+                if continueCsvSweepAtCycle(completedCycle + 1) then
+                    S.sweepStatusText = completeMsg
+                    return
+                end
+                finishCsvSweep(string.format(
+                    "All cycles complete through cycle %d: %s", CYCLE_COUNT, CSV_PATH
+                ))
+                return
+            end
+            finishCsvSweep(completeMsg)
             return
         end
         updateSweepStatus()
@@ -1673,17 +1748,48 @@ local function onEggSpawned()
     S.eggDataToBird[eggData] = bird and bird.id or nil
     S.egg_count = S.egg_count + 1
     local frame = getGameFrame()
+    local eggX, eggY, eggZ, spawnDist
     if bird then
+        local eggMoby = regs.s0
+        eggX, eggY, eggZ = readMobyXYZ(eggMoby)
+        local targetIdx = S.birdDropTarget[bird.id]
+        if targetIdx then
+            local pathTable = getDropTargetPathTable()
+            if pathTable then
+                local target = readDropTargetEntry(pathTable, targetIdx)
+                spawnDist = dist2d(eggX, eggY, target.x, target.y)
+            end
+        end
         S.runRecord.egg_spawn_frames[bird.id] = frame
         S.runRecord.hatch_timers[bird.id] = hatchTimer
+        S.runRecord.egg_x[bird.id] = eggX
+        S.runRecord.egg_y[bird.id] = eggY
+        S.runRecord.egg_z[bird.id] = eggZ
+        if spawnDist then
+            S.runRecord.spawn_dist[bird.id] = spawnDist
+        end
         if not S.runRecord.weapons[bird.id] then
             S.runRecord.weapons[bird.id] = mobyIdToWeapon(dropId)
         end
     end
-    logSim(string.format(
-        "egg spawn: bird=%s random_delay=%d hatch_timer=%d drop=%s frame=%d",
-        birdLabelFromData(birdData), randomDelay, hatchTimer, dropLabel, frame
-    ))
+    if bird and spawnDist then
+        logSim(string.format(
+            "egg spawn: bird=%s random_delay=%d hatch_timer=%d drop=%s frame=%d pos=(%d,%d,%d) dist=%d",
+            birdLabelFromData(birdData), randomDelay, hatchTimer, dropLabel, frame,
+            eggX, eggY, eggZ, spawnDist
+        ))
+    elseif bird then
+        logSim(string.format(
+            "egg spawn: bird=%s random_delay=%d hatch_timer=%d drop=%s frame=%d pos=(%d,%d,%d)",
+            birdLabelFromData(birdData), randomDelay, hatchTimer, dropLabel, frame,
+            eggX, eggY, eggZ
+        ))
+    else
+        logSim(string.format(
+            "egg spawn: bird=%s random_delay=%d hatch_timer=%d drop=%s frame=%d",
+            birdLabelFromData(birdData), randomDelay, hatchTimer, dropLabel, frame
+        ))
+    end
     tryCompleteCycle()
     return true
 end
