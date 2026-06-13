@@ -175,6 +175,7 @@ local MAP = {
     useMoveMovies = true,
     recordSummaryCsv = true,
     recordTrajectories = false,
+    skipNoTriple = true,
     scale = 1.2,
     sprite = nil,
 }
@@ -205,6 +206,8 @@ local WEAPON_FORCE_MOBY = {
     rocket = 0x198,
 }
 local WEAPON_FORCE_KEYS = { 'none', 'barrel', 'bomb', 'rocket' }
+local WEAPON_PERM_KEYS = { BARREL, BOMB, ROCKET }
+local WEAPON_PERM_OPTIONS = #WEAPON_PERM_KEYS
 local WEAPON_FORCE_COMBO_ITEMS = 'None\0Barrel\0Bomb\0Rocket\0'
 
 local function weaponForceKeyToComboIndex(forceWeapon)
@@ -254,6 +257,7 @@ local MOBY_TO_WEAPON = {
 }
 
 local PERM_CACHE = {}
+local WEAPON_PERM_FILTER_CACHE = {}
 
 local function getActiveBirdCount(cycle)
     return cycle <= 2 and 2 or 3
@@ -300,6 +304,80 @@ end
 
 local function permCountForCycle(cycle)
     return #getPermTable(cycle)
+end
+
+local function weaponAssignmentAt(activeCount, weaponIndex)
+    local assign = {}
+    local idx = weaponIndex
+    for i = activeCount, 1, -1 do
+        local wi = idx % WEAPON_PERM_OPTIONS
+        idx = math.floor(idx / WEAPON_PERM_OPTIONS)
+        assign[i] = WEAPON_PERM_KEYS[wi + 1]
+    end
+    return assign
+end
+
+local function countBombsInAssignment(assign)
+    local n = 0
+    for i = 1, #assign do
+        if assign[i] == BOMB then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+local function weaponAssignmentAllowed(assign)
+    if not MAP.skipNoTriple then
+        return true
+    end
+    return countBombsInAssignment(assign) < 2
+end
+
+local function getWeaponPermFilter(activeCount)
+    local key = string.format("%d:%s", activeCount, MAP.skipNoTriple and "1" or "0")
+    if not WEAPON_PERM_FILTER_CACHE[key] then
+        local list = {}
+        local total = WEAPON_PERM_OPTIONS ^ activeCount
+        for i = 0, total - 1 do
+            local assign = weaponAssignmentAt(activeCount, i)
+            if weaponAssignmentAllowed(assign) then
+                list[#list + 1] = i
+            end
+        end
+        WEAPON_PERM_FILTER_CACHE[key] = list
+    end
+    return WEAPON_PERM_FILTER_CACHE[key]
+end
+
+local function weaponAssignmentCount(activeCount)
+    return #getWeaponPermFilter(activeCount)
+end
+
+local function resolveWeaponAssignment(activeCount, filteredIndex)
+    local rawIndex = getWeaponPermFilter(activeCount)[filteredIndex + 1]
+    if rawIndex == nil then
+        return nil
+    end
+    return weaponAssignmentAt(activeCount, rawIndex)
+end
+
+local function forceComboCount(cycle)
+    return weaponAssignmentCount(getActiveBirdCount(cycle))
+end
+
+local function applyWeaponPerm(cycle, weaponIndex)
+    local activeCount = getActiveBirdCount(cycle)
+    local weapons = resolveWeaponAssignment(activeCount, weaponIndex)
+    if not weapons then
+        return false
+    end
+    for i, bird in ipairs(BIRDS) do
+        if i <= activeCount then
+            bird.forceWeapon = weapons[i]
+        end
+    end
+    return true
 end
 
 local function csvField(value)
@@ -514,6 +592,7 @@ _G.GulpRngLoop = _G.GulpRngLoop or {
     sweepRecording = false,
     sweepPrevRunSimulations = false,
     trajectoryBuffer = {},
+    forceComboIndex = 0,
 }
 
 local S = _G.GulpRngLoop
@@ -565,6 +644,7 @@ end
 S.sweepRecording = S.sweepRecording or false
 S.sweepPrevRunSimulations = S.sweepPrevRunSimulations or false
 S.trajectoryBuffer = S.trajectoryBuffer or {}
+S.forceComboIndex = S.forceComboIndex or 0
 if not S.runRecord then
     S.runRecord = newRunRecord()
 end
@@ -1148,6 +1228,8 @@ end
 local switchActiveCycle
 local reloadActiveMovie
 local restartPlayback, startPlayback
+local advanceForceCombo
+local resetForceCombo
 local startSimulations, stopSimulations
 local startCsvSweep, finishCsvSweep, cancelCsvSweep
 local registerForceBreakpoints
@@ -1344,6 +1426,28 @@ local function drawGulpMapFrame()
             if weaponChanged then
                 bird.forceWeapon = weaponForceComboIndexToKey(weaponIndex)
             end
+        end
+        imgui.SameLine()
+        if imgui.Button('Reset') then
+            resetForceCombo()
+        end
+        imgui.SameLine()
+        if imgui.Button('Next') then
+            advanceForceCombo()
+        end
+        imgui.SameLine()
+        imgui.AlignTextToFramePadding()
+        imgui.TextUnformatted(string.format(
+            '%d / %d',
+            S.forceComboIndex + 1,
+            forceComboCount(S.activeCycle)
+        ))
+        imgui.SameLine()
+        local prevSkipNoTriple = MAP.skipNoTriple
+        _, MAP.skipNoTriple = imgui.Checkbox('Skip No Triple', MAP.skipNoTriple)
+        if prevSkipNoTriple ~= MAP.skipNoTriple and not S.sweepActive then
+            S.forceComboIndex = 0
+            applyWeaponPermStep(0, false)
         end
         if S.sweepActive then
             imgui.EndDisabled()
@@ -1652,6 +1756,7 @@ switchActiveCycle = function(newCycle)
         return
     end
     S.activeCycle = clampCycle(newCycle)
+    S.forceComboIndex = 0
     S.wasPlaying = false
     PCSX.Movie.stop()
     S.loadedMoviePath = nil
@@ -1733,6 +1838,56 @@ restartPlayback = function(reason)
     S.simulation_count = S.simulation_count + 1
     PCSX.nextTick(startPlayback)
 end
+
+local function applyWeaponPermStep(weaponIndex, restartPlaybackOnApply)
+    local cycle = S.activeCycle
+    local total = forceComboCount(cycle)
+    if total <= 0 then
+        return false
+    end
+    S.forceComboIndex = weaponIndex
+    if not applyWeaponPerm(cycle, S.forceComboIndex) then
+        return false
+    end
+    local activeCount = getActiveBirdCount(cycle)
+    local weapons = resolveWeaponAssignment(activeCount, S.forceComboIndex)
+    local weaponLabels = {}
+    for i = 1, activeCount do
+        weaponLabels[i] = weapons[i]
+    end
+    print(string.format(
+        "Weapon perm %d / %d: cycle %d [%s]",
+        S.forceComboIndex + 1,
+        total,
+        cycle,
+        table.concat(weaponLabels, ", ")
+    ))
+    if restartPlaybackOnApply and S.loopActive and MAP.runSimulations then
+        restartPlayback(string.format("Weapon perm %d / %d", S.forceComboIndex + 1, total))
+    end
+    return true
+end
+
+local function advanceForceComboImpl()
+    if S.sweepActive then
+        return
+    end
+    local total = forceComboCount(S.activeCycle)
+    if total <= 0 then
+        return
+    end
+    applyWeaponPermStep((S.forceComboIndex + 1) % total, true)
+end
+
+local function resetForceComboImpl()
+    if S.sweepActive then
+        return
+    end
+    applyWeaponPermStep(0, true)
+end
+
+advanceForceCombo = advanceForceComboImpl
+resetForceCombo = resetForceComboImpl
 
 finishCsvSweep = function(message, options)
     if not S.sweepActive then
