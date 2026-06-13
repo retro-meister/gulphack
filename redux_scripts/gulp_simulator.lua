@@ -1883,7 +1883,7 @@ local function resetForceComboImpl()
     if S.sweepActive then
         return
     end
-    applyWeaponPermStep(0, true)
+    applyWeaponPermStep(0, false)
 end
 
 advanceForceCombo = advanceForceComboImpl
