@@ -28,6 +28,19 @@ extern uint8_t gulpBird0Data[];
 #define PRIM_BUDGET_RESERVE         0x200
 #define LABEL_PRIM_BUDGET           0x80
 
+#define GULP_MARKER_BIRD_COUNT      3
+#define GULP_MARKER_NO_BIRD         0xff
+
+static const uint8_t bird_ring_color[GULP_MARKER_BIRD_COUNT][3] = {
+    { 255, 0, 0 },
+    { 0, 255, 0 },
+    { 0, 0, 255 },
+};
+
+static const uint8_t default_ring_color[3] = { 255, 220, 68 };
+
+static uint8_t claimed_drop_bird[DROP_TARGET_LAST + 1];
+
 static const int ring_cos[RING_SEGMENTS] = {
     4096, 2896, 0, -2896, -4096, -2896, 0, 2896,
 };
@@ -56,6 +69,39 @@ static const GulpMarkerConfig gulpMarkerConfigDefault = {
 };
 
 static const GulpMarkerConfig *marker_config = &gulpMarkerConfigDefault;
+
+void gulp_markers_clear_claims(void) {
+    int index;
+
+    for (index = 0; index <= DROP_TARGET_LAST; index++) {
+        claimed_drop_bird[index] = GULP_MARKER_NO_BIRD;
+    }
+}
+
+void gulp_markers_claim_drop(int bird_index, int drop_index) {
+    if (bird_index < 0 || bird_index >= GULP_MARKER_BIRD_COUNT) {
+        return;
+    }
+    if (drop_index < DROP_TARGET_FIRST || drop_index > DROP_TARGET_LAST) {
+        return;
+    }
+    claimed_drop_bird[drop_index] = (uint8_t)bird_index;
+}
+
+static const uint8_t *ring_color_for_drop(int drop_index) {
+    uint8_t bird_index;
+
+    if (drop_index < DROP_TARGET_FIRST || drop_index > DROP_TARGET_LAST) {
+        return default_ring_color;
+    }
+
+    bird_index = claimed_drop_bird[drop_index];
+    if (bird_index >= GULP_MARKER_BIRD_COUNT) {
+        return default_ring_color;
+    }
+
+    return bird_ring_color[bird_index];
+}
 
 static int32_t *get_path_table(void) {
     int32_t path_table = *(int32_t *)(gulpBird0Data + 0x0c);
@@ -176,12 +222,17 @@ static void draw_drop_label(int index, int sx, int sy) {
 
 static void draw_drop_marker(int index, int32_t x, int32_t y) {
     int screen[3];
+    const uint8_t *color;
 
     if (!project_drop_center(x, y, screen)) {
         return;
     }
 
-    draw_world_ring(x, y, GULP_ARENA_FLOOR_Z, marker_config->marker_radius, 0, 0, 0);
+    color = ring_color_for_drop(index);
+    draw_world_ring(
+        x, y, GULP_ARENA_FLOOR_Z, marker_config->marker_radius,
+        color[0], color[1], color[2]
+    );
 
     draw_drop_label(index, screen[0], screen[1]);
 }

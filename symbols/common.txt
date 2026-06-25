@@ -14,5 +14,6 @@ gulpBird0Data          = 0x80120e44;
 gulpBird1Data          = 0x80120c64;
 gulpBird2Data          = 0x80120e88;
 
-gulpDropTargetRollSite = 0x80077490;
-gulpWeaponRollSite     = 0x80077838;
+gulpDropTargetRollSite     = 0x80077490;
+gulpWeaponRollSite         = 0x80077838;
+gulpDropLocationStoreSite  = 0x80077454;
