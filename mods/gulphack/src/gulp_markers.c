@@ -4,6 +4,7 @@
 extern void SelectRender(int flags);
 extern void PrimitiveBuffer_Insert(uint32_t *primitive);
 extern void WorldToScreenVec3(int *out, int *worldIn, unsigned shift);
+extern void DrawNumberSmall(int value, int screenPosX, int screenPosY, int colorIndex);
 
 extern int     GAME_gameState;
 extern uint8_t GAME_level_id;
@@ -25,6 +26,7 @@ extern uint8_t gulpBird0Data[];
 #define LINE_G2_CODE                0x50
 #define RING_SEGMENTS               8
 #define PRIM_BUDGET_RESERVE         0x200
+#define LABEL_PRIM_BUDGET           0x80
 
 static const int ring_cos[RING_SEGMENTS] = {
     4096, 2896, 0, -2896, -4096, -2896, 0, 2896,
@@ -35,12 +37,22 @@ static const int ring_sin[RING_SEGMENTS] = {
 
 typedef struct {
     int show_drop_markers;
+    int show_drop_labels;
     int marker_radius;
+    int label_y_offset;
+    int label_x_offset_single;
+    int label_x_offset_double;
+    int label_color_drop;
 } GulpMarkerConfig;
 
 static const GulpMarkerConfig gulpMarkerConfigDefault = {
-    .show_drop_markers = 1,
-    .marker_radius     = 600,
+    .show_drop_markers      = 1,
+    .show_drop_labels       = 1,
+    .marker_radius          = 900,
+    .label_y_offset         = -4,
+    .label_x_offset_single  = 6,
+    .label_x_offset_double  = 12,
+    .label_color_drop       = 3,
 };
 
 static const GulpMarkerConfig *marker_config = &gulpMarkerConfigDefault;
@@ -62,6 +74,16 @@ static void read_drop_xy(int32_t *path_table, int index, int32_t *x, int32_t *y)
 
 static int prim_buffer_remaining(void) {
     return (int)(primitiveBuffer_end - primitiveBuffer_next);
+}
+
+static int project_drop_center(int32_t x, int32_t y, int *screen) {
+    int world[3];
+
+    world[0] = x;
+    world[1] = y;
+    world[2] = GULP_ARENA_FLOOR_Z;
+    WorldToScreenVec3(screen, world, 0);
+    return screen[2] > 0;
 }
 
 static void insert_line_g2(
@@ -129,12 +151,39 @@ static void draw_world_ring(
     }
 }
 
-static void draw_drop_marker(int index, int32_t x, int32_t y) {
-    if (index == DROP_TARGET_HOME) {
-        draw_world_ring(x, y, GULP_ARENA_FLOOR_Z, marker_config->marker_radius, 50, 220, 50);
-    } else {
-        draw_world_ring(x, y, GULP_ARENA_FLOOR_Z, marker_config->marker_radius, 255, 220, 50);
+static void draw_drop_label(int index, int sx, int sy) {
+    int x_offset;
+
+    if (!marker_config->show_drop_labels) {
+        return;
     }
+
+    if (prim_buffer_remaining() < LABEL_PRIM_BUDGET + PRIM_BUDGET_RESERVE) {
+        return;
+    }
+
+    x_offset = (index >= 10)
+        ? marker_config->label_x_offset_double
+        : marker_config->label_x_offset_single;
+
+    DrawNumberSmall(
+        index,
+        sx - x_offset,
+        (short)(sy + marker_config->label_y_offset),
+        marker_config->label_color_drop
+    );
+}
+
+static void draw_drop_marker(int index, int32_t x, int32_t y) {
+    int screen[3];
+
+    if (!project_drop_center(x, y, screen)) {
+        return;
+    }
+
+    draw_world_ring(x, y, GULP_ARENA_FLOOR_Z, marker_config->marker_radius, 0, 0, 0);
+
+    draw_drop_label(index, screen[0], screen[1]);
 }
 
 void gulp_draw_drop_markers(void) {
@@ -160,7 +209,7 @@ void gulp_draw_drop_markers(void) {
         last = table_count - 1;
     }
 
-    for (index = DROP_TARGET_HOME; index <= last; index++) {
+    for (index = DROP_TARGET_FIRST; index <= last; index++) {
         read_drop_xy(path_table, index, &x, &y);
         draw_drop_marker(index, x, y);
     }

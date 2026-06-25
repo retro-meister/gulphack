@@ -6,6 +6,7 @@ RandomRangeInclusive   = 0x8003891c;
 SelectRender           = 0x800155a0;
 PrimitiveBuffer_Insert = 0x8001b390;
 WorldToScreenVec3      = 0x8001c040;
+DrawNumberSmall        = 0x8004dad0;
 primitiveBuffer_next   = 0x80067030;
 primitiveBuffer_end    = 0x80067034;
 
