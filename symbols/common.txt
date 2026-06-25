@@ -3,6 +3,12 @@ GAME_gameState         = 0x800681c8;
 GAME_level_id          = 0x80066f90;
 RandomRangeInclusive   = 0x8003891c;
 
+SelectRender           = 0x800155a0;
+PrimitiveBuffer_Insert = 0x8001b390;
+WorldToScreenVec3      = 0x8001c040;
+primitiveBuffer_next   = 0x80067030;
+primitiveBuffer_end    = 0x80067034;
+
 gulpBird0Data          = 0x80120e44;
 gulpBird1Data          = 0x80120c64;
 gulpBird2Data          = 0x80120e88;

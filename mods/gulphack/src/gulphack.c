@@ -97,6 +97,8 @@ static const GulpDropScript drop_script[GULP_NUM_BIRDS][GULP_BIRD_SCRIPT_LEN] = 
 
 static int hooks_installed = 0;
 
+extern void gulp_select_render_hook_trampoline(void);
+
 static const void * const bird_key[GULP_NUM_BIRDS] = {
     (const void *)0x80120e44,
     (const void *)0x80120c64,
@@ -201,6 +203,7 @@ static void gulp_install_hooks(void) {
     gulp_reset_bird_tracking();
     patch_jal((uint32_t *)0x80077490, (uint32_t)gulp_target_hook_trampoline);
     patch_jal((uint32_t *)0x80077838, (uint32_t)gulp_weapon_hook_trampoline);
+    patch_jal((uint32_t *)0x80013aec, (uint32_t)gulp_select_render_hook_trampoline);
     hooks_installed = 1;
 }
 
