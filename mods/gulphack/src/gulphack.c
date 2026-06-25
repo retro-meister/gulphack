@@ -18,6 +18,7 @@ typedef struct {
     int vulture_drop_population_gate;
     int random_rocket_lower;
     int random_bomb_upper_exclusive;
+    int force_drop_script;
 } GulpConfig;
 
 static const GulpConfig gulpConfigDefault = {
@@ -31,6 +32,7 @@ static const GulpConfig gulpConfigDefault = {
     .vulture_drop_population_gate   = 6,
     .random_rocket_lower            = 81,
     .random_bomb_upper_exclusive    = 41,
+    .force_drop_script              = 1,
 };
 
 static const GulpConfig gulpConfigCustom = {
@@ -44,6 +46,7 @@ static const GulpConfig gulpConfigCustom = {
     .vulture_drop_population_gate   = 6,
     .random_rocket_lower            = 81,
     .random_bomb_upper_exclusive    = 41,
+    .force_drop_script              = 1,
 };
 
 static const GulpConfig *config = &gulpConfigCustom;
@@ -139,7 +142,9 @@ int gulp_target_hook(int min, int max, const void *vultureData) {
     int bird = gulp_get_bird_index(vultureData);
     int target;
 
-    if (bird >= 0 && bird_drop_count[bird] < GULP_BIRD_SCRIPT_LEN) {
+    if (config->force_drop_script
+        && bird >= 0
+        && bird_drop_count[bird] < GULP_BIRD_SCRIPT_LEN) {
         target = drop_script[bird][bird_drop_count[bird]].targetIndex;
     } else {
         target = RandomRangeInclusive(min, max);
@@ -156,7 +161,9 @@ int gulp_target_hook(int min, int max, const void *vultureData) {
 // since the weapon roll happens exactly once per completed drop.
 int gulp_weapon_hook(int min, int max, const void *vultureData) {
     int bird = gulp_get_bird_index(vultureData);
-    if (bird >= 0 && bird_drop_count[bird] < GULP_BIRD_SCRIPT_LEN) {
+    if (config->force_drop_script
+        && bird >= 0
+        && bird_drop_count[bird] < GULP_BIRD_SCRIPT_LEN) {
         GulpWeapon w = drop_script[bird][bird_drop_count[bird]].weapon;
         bird_drop_count[bird]++;
         return weapon_roll[w];

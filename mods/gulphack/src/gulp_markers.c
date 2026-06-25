@@ -79,12 +79,21 @@ void gulp_markers_clear_claims(void) {
 }
 
 void gulp_markers_claim_drop(int bird_index, int drop_index) {
+    int index;
+
     if (bird_index < 0 || bird_index >= GULP_MARKER_BIRD_COUNT) {
         return;
     }
     if (drop_index < DROP_TARGET_FIRST || drop_index > DROP_TARGET_LAST) {
         return;
     }
+
+    for (index = DROP_TARGET_FIRST; index <= DROP_TARGET_LAST; index++) {
+        if (claimed_drop_bird[index] == (uint8_t)bird_index) {
+            claimed_drop_bird[index] = GULP_MARKER_NO_BIRD;
+        }
+    }
+
     claimed_drop_bird[drop_index] = (uint8_t)bird_index;
 }
 
