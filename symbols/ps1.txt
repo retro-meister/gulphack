@@ -1,6 +1,1 @@
 header_start = 0x8000B070;
-
-GAME_RenderGame        = 0x800156fc;
-GAME_gameState         = 0x800681c8;
-GAME_level_id          = 0x80066f90;
-RandomRangeInclusive   = 0x8003891c;
