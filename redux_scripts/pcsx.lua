@@ -1,1 +1,1 @@
-dofile "gulp_simulator.lua"
+dofile "gulp_camera.lua"

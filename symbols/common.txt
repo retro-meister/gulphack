@@ -3,17 +3,6 @@ GAME_gameState         = 0x800681c8;
 GAME_level_id          = 0x80066f90;
 RandomRangeInclusive   = 0x8003891c;
 
-cameraPosition         = 0x80067eac;
-cameraPitchA           = 0x80067ec8;
-cameraPitchB           = 0x80067eca;
-cam_yaw                = 0x80067ecc;
-cameraOrbitCenter      = 0x80067f00;
-cameraFixedFlag        = 0x80067fc9;
-cameraFixedPosition    = 0x80068064;
-cameraFixedPitchA      = 0x80068070;
-cameraFixedPitchB      = 0x80068072;
-cameraFixedYaw         = 0x80068074;
-
 gulpBird0Data          = 0x80120e44;
 gulpBird1Data          = 0x80120c64;
 gulpBird2Data          = 0x80120e88;

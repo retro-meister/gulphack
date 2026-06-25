@@ -5,32 +5,7 @@ extern int               RandomRangeInclusive(int min, int max);
 extern int               GAME_gameState;
 extern uint8_t           GAME_level_id;
 
-extern int32_t           cameraPosition;
-extern int16_t           cameraPitchA;
-extern int16_t           cameraPitchB;
-extern int16_t           cam_yaw;
-extern int32_t           cameraOrbitCenter;
-extern uint8_t           cameraFixedFlag;
-extern int32_t           cameraFixedPosition;
-extern int16_t           cameraFixedPitchA;
-extern int16_t           cameraFixedPitchB;
-extern int16_t           cameraFixedYaw;
-
-#define GULP_AT32(sym) ((volatile int32_t *)(void *)&(sym))
-#define GULP_AT16(sym) ((volatile int16_t *)(void *)&(sym))
-#define GULP_AT8(sym)  ((volatile uint8_t *)(void *)&(sym))
-
 #define GULP_FIGHT_LEVEL_ID 0x2e
-
-#define GULP_VULTURE_PATH_TABLE_OFF 0x0c
-#define GULP_DROP_TARGET_ENTRIES_OFF 0x0c
-
-#define GULP_ARENA_CENTER_X       36864
-#define GULP_ARENA_CENTER_Y       40960
-#define GULP_ARENA_FLOOR_Z        18944
-#define GULP_CAMERA_HEIGHT        (GULP_ARENA_FLOOR_Z + 19000)
-#define GULP_CAMERA_PITCH         0x400
-#define GULP_CAMERA_YAW           0x000
 
 typedef struct {
     int egg_hatch_timer_min;
@@ -43,7 +18,6 @@ typedef struct {
     int vulture_drop_population_gate;
     int random_rocket_lower;
     int random_bomb_upper_exclusive;
-    int hardcode_camera;
 } GulpConfig;
 
 static const GulpConfig gulpConfigDefault = {
@@ -57,7 +31,6 @@ static const GulpConfig gulpConfigDefault = {
     .vulture_drop_population_gate   = 6,
     .random_rocket_lower            = 81,
     .random_bomb_upper_exclusive    = 41,
-    .hardcode_camera                = 0,
 };
 
 static const GulpConfig gulpConfigCustom = {
@@ -71,63 +44,9 @@ static const GulpConfig gulpConfigCustom = {
     .vulture_drop_population_gate   = 6,
     .random_rocket_lower            = 81,
     .random_bomb_upper_exclusive    = 41,
-    .hardcode_camera                = 1,
 };
 
 static const GulpConfig *config = &gulpConfigCustom;
-
-static int camera_hardcoded = 0;
-
-static void gulp_get_arena_center(int32_t *x, int32_t *y) {
-    const volatile int32_t *bird0 = (const volatile int32_t *)0x80120e44;
-    uint32_t path_table = (uint32_t)bird0[GULP_VULTURE_PATH_TABLE_OFF / sizeof(int32_t)];
-    if (path_table != 0) {
-        const volatile int32_t *entry = (const volatile int32_t *)(path_table + GULP_DROP_TARGET_ENTRIES_OFF);
-        *x = entry[0];
-        *y = entry[1];
-        return;
-    }
-    *x = GULP_ARENA_CENTER_X;
-    *y = GULP_ARENA_CENTER_Y;
-}
-
-static void gulp_restore_camera(void) {
-    *GULP_AT8(cameraFixedFlag) = 0;
-    camera_hardcoded = 0;
-}
-
-static void gulp_apply_hardcoded_camera(void) {
-    int32_t center_x;
-    int32_t center_y;
-    volatile int32_t *fixed_pos;
-    volatile int32_t *live_pos;
-    volatile int32_t *orbit_center;
-
-    gulp_get_arena_center(&center_x, &center_y);
-
-    fixed_pos = GULP_AT32(cameraFixedPosition);
-    fixed_pos[0] = center_x;
-    fixed_pos[1] = center_y;
-    fixed_pos[2] = GULP_CAMERA_HEIGHT;
-    *GULP_AT16(cameraFixedPitchA) = 0;
-    *GULP_AT16(cameraFixedPitchB) = GULP_CAMERA_PITCH;
-    *GULP_AT16(cameraFixedYaw) = GULP_CAMERA_YAW;
-    *GULP_AT8(cameraFixedFlag) = 1;
-
-    orbit_center = GULP_AT32(cameraOrbitCenter);
-    orbit_center[0] = center_x;
-    orbit_center[1] = center_y;
-    orbit_center[2] = GULP_ARENA_FLOOR_Z;
-
-    live_pos = GULP_AT32(cameraPosition);
-    live_pos[0] = center_x;
-    live_pos[1] = center_y;
-    live_pos[2] = GULP_CAMERA_HEIGHT;
-    *GULP_AT16(cameraPitchA) = 0;
-    *GULP_AT16(cameraPitchB) = GULP_CAMERA_PITCH;
-    *GULP_AT16(cam_yaw) = GULP_CAMERA_YAW;
-    camera_hardcoded = 1;
-}
 
 #define GULP_NUM_BIRDS       3
 #define GULP_BIRD_SCRIPT_LEN 4
@@ -295,13 +214,7 @@ void main_hook(void) {
         if (!hooks_installed) {
             gulp_install_hooks();
         }
-        if (config->hardcode_camera) {
-            gulp_apply_hardcoded_camera();
-        }
     } else {
-        if (camera_hardcoded) {
-            gulp_restore_camera();
-        }
         if (hooks_installed) {
             hooks_installed = 0;
         }
