@@ -219,6 +219,8 @@ static void gulp_install_hooks(void) {
 void main_hook(void) {
     GAME_RenderGame();
 
+    patch_imm16((uint32_t *)0x80032fe4, 0);
+
     int in_gulp_fight = (GAME_gameState == 0) &&
                         (GAME_level_id == GULP_FIGHT_LEVEL_ID);
 
