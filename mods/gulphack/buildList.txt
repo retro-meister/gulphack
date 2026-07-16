@@ -1,5 +1,5 @@
 common, exe, 0x80011afc, 0x0, src/hook_main.s
 
-american_emu, header, header_start, 0x4c, src/gulphack.c src/gulp_markers.c, gulphack.bin
-american_ps1, header, header_start, 0x4c, src/gulphack.c src/gulp_markers.c, gulphack.bin
-american_ps2, header, header_start, 0x48, src/gulphack.c src/gulp_markers.c, gulphack.bin
+american_emu, header, header_start, 0x4c, src/gulphack.c, gulphack.bin
+american_ps1, header, header_start, 0x4c, src/gulphack.c, gulphack.bin
+american_ps2, header, header_start, 0x48, src/gulphack.c, gulphack.bin

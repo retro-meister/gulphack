@@ -100,10 +100,6 @@ static const GulpDropScript drop_script[GULP_NUM_BIRDS][GULP_BIRD_SCRIPT_LEN] = 
 
 static int hooks_installed = 0;
 
-extern void gulp_select_render_hook_trampoline(void);
-extern void gulp_markers_clear_claims(void);
-extern void gulp_markers_claim_drop(int bird_index, int drop_index);
-
 static const void * const bird_key[GULP_NUM_BIRDS] = {
     (const void *)0x80120e44,
     (const void *)0x80120c64,
@@ -125,13 +121,6 @@ static void gulp_reset_bird_tracking(void) {
     for (int i = 0; i < GULP_NUM_BIRDS; i++) {
         bird_drop_count[i] = 0;
     }
-    gulp_markers_clear_claims();
-}
-
-static void gulp_claim_drop_for_bird(int bird, int drop_index) {
-    if (bird >= 0 && drop_index >= 1 && drop_index <= 25) {
-        gulp_markers_claim_drop(bird, drop_index);
-    }
 }
 
 // Replaces: jal RandomRangeInclusive at 0x80077490 (drop-target slot roll).
@@ -150,7 +139,6 @@ int gulp_target_hook(int min, int max, const void *vultureData) {
         target = RandomRangeInclusive(min, max);
     }
 
-    gulp_claim_drop_for_bird(bird, target);
     return target;
 }
 
@@ -225,7 +213,6 @@ static void gulp_install_hooks(void) {
     gulp_reset_bird_tracking();
     patch_jal((uint32_t *)0x80077490, (uint32_t)gulp_target_hook_trampoline);
     patch_jal((uint32_t *)0x80077838, (uint32_t)gulp_weapon_hook_trampoline);
-    patch_jal((uint32_t *)0x80013aec, (uint32_t)gulp_select_render_hook_trampoline);
     hooks_installed = 1;
 }
 
@@ -241,7 +228,6 @@ void main_hook(void) {
         }
     } else {
         if (hooks_installed) {
-            gulp_markers_clear_claims();
             hooks_installed = 0;
         }
     }
