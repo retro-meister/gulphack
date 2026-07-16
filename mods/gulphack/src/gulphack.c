@@ -37,7 +37,7 @@ static const GulpConfig gulpConfigDefault = {
 
 static const GulpConfig gulpConfigCustom = {
     .egg_hatch_timer_min            = 0x78,
-    .egg_hatch_timer_max            = 0xdc,
+    .egg_hatch_timer_max            = 160,
     .vulture_drop_delay_min         = 0x50,
     .vulture_drop_delay_max         = 0xb4,
     .vulture_approach_timer_initial = 0x03e8,

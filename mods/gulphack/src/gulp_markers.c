@@ -59,8 +59,8 @@ typedef struct {
 } GulpMarkerConfig;
 
 static const GulpMarkerConfig gulpMarkerConfigDefault = {
-    .show_drop_markers      = 1,
-    .show_drop_labels       = 1,
+    .show_drop_markers      = 0,
+    .show_drop_labels       = 0,
     .marker_radius          = 900,
     .label_y_offset         = -4,
     .label_x_offset_single  = 6,
